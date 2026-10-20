@@ -1,0 +1,15 @@
+build/
+dist/
+.tools/
+.dart_tool/
+.flutter-plugins*
+.packages
+**/build/
+**/Flutter/ephemeral/
+**/Pods/
+**/.symlinks/
+**/local.properties
+.DS_Store
+samples/private/
+*.dSYM/
+__pycache__/

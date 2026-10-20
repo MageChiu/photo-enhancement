@@ -1,0 +1,8 @@
+{
+  "version": 1,
+  "description": "Copy to a private manifest and replace paths with locally licensed samples. No actual camera model is verified by this example.",
+  "samples": [
+    {"path": "samples/private/sony.arw", "format": "ARW", "camera": "unverified", "expectedWidth": 6000, "expectedHeight": 4000},
+    {"path": "samples/private/photo.jpg", "format": "JPEG", "camera": "unverified", "expectedWidth": 4000, "expectedHeight": 3000}
+  ]
+}
