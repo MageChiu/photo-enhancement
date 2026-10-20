@@ -2,6 +2,7 @@
 build/
 dist/
 .tools/
+.fvm/
 .dart_tool/
 .flutter-plugins*
 .packages
@@ -14,6 +15,8 @@ dist/
 samples/private/
 *.dSYM/
 __pycache__/
+app/ios/PhotoCore/
+app/ohos/entry/libs/
 
 # Miscellaneous
 *.class

@@ -9,6 +9,13 @@ android {
     compileSdk = flutter.compileSdkVersion
     ndkVersion = flutter.ndkVersion
 
+    externalNativeBuild {
+        cmake {
+            path = file("../../../CMakeLists.txt")
+            version = "3.22.1"
+        }
+    }
+
     compileOptions {
         sourceCompatibility = JavaVersion.VERSION_17
         targetCompatibility = JavaVersion.VERSION_17
@@ -27,6 +34,14 @@ android {
         // flag during build.
         versionCode = flutter.versionCode
         versionName = flutter.versionName
+        ndk { abiFilters += listOf("arm64-v8a", "x86_64") }
+        externalNativeBuild {
+            cmake {
+                arguments += listOf("-DPE_PORTABLE_DEPS=ON",
+                    "-DPE_BUILD_TESTS=OFF", "-DPE_BUILD_CLI=OFF", "-DANDROID_STL=c++_shared")
+                targets += "photo_core"
+            }
+        }
     }
 
     buildTypes {

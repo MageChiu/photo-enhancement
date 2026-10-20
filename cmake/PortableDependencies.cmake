@@ -1,0 +1,130 @@
+# Fixed upstream source archives shared by Android, iOS and OpenHarmony.
+# Downloads live under build/, never as nested Git repositories.
+include(FetchContent)
+if(POLICY CMP0135)
+  cmake_policy(SET CMP0135 NEW)
+endif()
+set(BUILD_SHARED_LIBS OFF CACHE BOOL "" FORCE)
+set(BUILD_TESTING OFF CACHE BOOL "" FORCE)
+function(pe_source name repository tag checksum)
+  string(REGEX REPLACE "^pe_" "" archive_name "${name}")
+  set(archive "${CMAKE_CURRENT_LIST_DIR}/../build/dependency-archives/${archive_name}.tar.gz")
+  if(EXISTS "${archive}")
+    set(url "${archive}")
+  else()
+    set(url "https://codeload.github.com/${repository}/tar.gz/refs/tags/${tag}")
+  endif()
+  set(extra)
+  if(name STREQUAL "pe_jpeg")
+    # Populate sources without invoking upstream's top-level-only project.
+    set(extra SOURCE_SUBDIR pe-external-project)
+  endif()
+  FetchContent_Declare(${name} URL "${url}" URL_HASH "SHA256=${checksum}" ${extra})
+endfunction()
+pe_source(pe_zlib madler/zlib v1.3.1 17e88863f3600672ab49182f217281b6fc4d3c762bde361935e436a95214d05c)
+pe_source(pe_jpeg libjpeg-turbo/libjpeg-turbo 3.1.1 304165ae11e64ab752e9cfc07c37bfdc87abd0bfe4bc699e59f34036d9c84f72)
+pe_source(pe_png pnggroup/libpng v1.6.47 631a4c58ea6c10c81f160c4b21fa8495b715d251698ebc2552077e8450f30454)
+pe_source(pe_lcms mm2/Little-CMS lcms2.17 6e6f6411db50e85ae8ff7777f01b2da0614aac13b7b9fcbea66dc56a1bc71418)
+pe_source(pe_freetype freetype/freetype VER-2-13-3 bc5c898e4756d373e0d991bab053036c5eb2aa7c0d5c67e8662ddc6da40c4103)
+pe_source(pe_webp webmproject/libwebp v1.5.0 668c9aba45565e24c27e17f7aaf7060a399f7f31dba6c97a044e1feacb930f37)
+
+FetchContent_MakeAvailable(pe_zlib)
+add_library(ZLIB::ZLIB STATIC IMPORTED GLOBAL)
+set_target_properties(ZLIB::ZLIB PROPERTIES IMPORTED_LOCATION "${pe_zlib_BINARY_DIR}/libz.a"
+  INTERFACE_INCLUDE_DIRECTORIES "${pe_zlib_BINARY_DIR};${pe_zlib_SOURCE_DIR}")
+add_dependencies(ZLIB::ZLIB zlibstatic)
+set(ZLIB_FOUND TRUE)
+set(ZLIB_LIBRARY zlibstatic CACHE STRING "" FORCE)
+set(ZLIB_INCLUDE_DIR "${pe_zlib_SOURCE_DIR}" CACHE PATH "" FORCE)
+target_include_directories(zlibstatic PUBLIC "${pe_zlib_BINARY_DIR}" "${pe_zlib_SOURCE_DIR}")
+
+set(ENABLE_SHARED OFF CACHE BOOL "" FORCE)
+set(ENABLE_STATIC ON CACHE BOOL "" FORCE)
+set(WITH_TURBOJPEG OFF CACHE BOOL "" FORCE)
+set(WITH_TOOLS OFF CACHE BOOL "" FORCE)
+set(WITH_TESTS OFF CACHE BOOL "" FORCE)
+# Keep toolchain bootstrap independent of a host assembler.
+set(WITH_SIMD OFF CACHE BOOL "" FORCE)
+# libjpeg-turbo explicitly requires a standalone CMake project.
+FetchContent_MakeAvailable(pe_jpeg)
+include(ExternalProject)
+set(jpeg_toolchain_args)
+foreach(setting CMAKE_TOOLCHAIN_FILE CMAKE_SYSTEM_NAME CMAKE_OSX_SYSROOT CMAKE_OSX_ARCHITECTURES
+    CMAKE_OSX_DEPLOYMENT_TARGET ANDROID_ABI ANDROID_PLATFORM ANDROID_STL
+    OHOS_ARCH OHOS_PLATFORM OHOS_STL CMAKE_C_COMPILER CMAKE_CXX_COMPILER)
+  if(DEFINED ${setting})
+    list(APPEND jpeg_toolchain_args "-D${setting}=${${setting}}")
+  endif()
+endforeach()
+if(CMAKE_OSX_ARCHITECTURES)
+  list(APPEND jpeg_toolchain_args "-DCMAKE_SYSTEM_PROCESSOR=${CMAKE_OSX_ARCHITECTURES}")
+endif()
+file(MAKE_DIRECTORY "${pe_jpeg_BINARY_DIR}")
+ExternalProject_Add(pe_jpeg_build SOURCE_DIR "${pe_jpeg_SOURCE_DIR}"
+  BINARY_DIR "${pe_jpeg_BINARY_DIR}"
+  CMAKE_ARGS ${jpeg_toolchain_args} -DCMAKE_BUILD_TYPE=${CMAKE_BUILD_TYPE}
+    -DCMAKE_POSITION_INDEPENDENT_CODE=ON -DENABLE_SHARED=OFF -DENABLE_STATIC=ON
+    -DWITH_TURBOJPEG=OFF -DWITH_TOOLS=OFF -DWITH_TESTS=OFF -DWITH_SIMD=OFF
+  BUILD_COMMAND ${CMAKE_COMMAND} --build <BINARY_DIR> --target jpeg-static --parallel 4
+  INSTALL_COMMAND "" BUILD_BYPRODUCTS "${pe_jpeg_BINARY_DIR}/libjpeg.a")
+add_library(JPEG::JPEG STATIC IMPORTED GLOBAL)
+set_target_properties(JPEG::JPEG PROPERTIES IMPORTED_LOCATION "${pe_jpeg_BINARY_DIR}/libjpeg.a"
+  INTERFACE_INCLUDE_DIRECTORIES "${pe_jpeg_SOURCE_DIR}/src;${pe_jpeg_BINARY_DIR}")
+add_dependencies(JPEG::JPEG pe_jpeg_build)
+
+set(PNG_SHARED OFF CACHE BOOL "" FORCE)
+set(PNG_FRAMEWORK OFF CACHE BOOL "" FORCE)
+set(SKIP_INSTALL_ALL ON)
+set(PNG_TESTS OFF CACHE BOOL "" FORCE)
+set(PNG_TOOLS OFF CACHE BOOL "" FORCE)
+FetchContent_MakeAvailable(pe_png)
+add_library(PNG::PNG ALIAS png_static)
+
+FetchContent_MakeAvailable(pe_lcms)
+file(GLOB lcms_sources CONFIGURE_DEPENDS "${pe_lcms_SOURCE_DIR}/src/*.c")
+add_library(pe_lcms2 STATIC ${lcms_sources})
+target_include_directories(pe_lcms2 PUBLIC "${pe_lcms_SOURCE_DIR}/include")
+add_library(PkgConfig::LCMS2 ALIAS pe_lcms2)
+
+foreach(feature ZLIB BZIP2 PNG HARFBUZZ BROTLI)
+  set(FT_DISABLE_${feature} ON CACHE BOOL "" FORCE)
+endforeach()
+FetchContent_MakeAvailable(pe_freetype)
+add_library(Freetype::Freetype ALIAS freetype)
+
+if(PE_WITH_WEBP)
+  foreach(tool ANIM_UTILS CWEBP DWEBP GIF2WEBP IMG2WEBP VWEBP WEBPINFO WEBPMUX EXTRAS)
+    set(WEBP_BUILD_${tool} OFF CACHE BOOL "" FORCE)
+  endforeach()
+  FetchContent_MakeAvailable(pe_webp)
+  add_library(PkgConfig::WEBP ALIAS webp)
+  add_library(PkgConfig::WEBPDEMUX ALIAS webpdemux)
+  set(WEBP_FOUND TRUE)
+  set(WEBPDEMUX_FOUND TRUE)
+endif()
+if(PE_WITH_HEIF)
+  pe_source(pe_de265 strukturag/libde265 v1.0.16 ed12c931759c1575848832f70db5071a001ac813db4e4f568ee08aef6e234d4e)
+  pe_source(pe_heif strukturag/libheif v1.19.7 8334c7c418f82c30c9bec1f46e6abfd5a8d3c420a3210d5505eb1868696ce0cc)
+  set(ENABLE_DECODER OFF CACHE BOOL "" FORCE)
+  set(ENABLE_ENCODER OFF CACHE BOOL "" FORCE)
+  set(ENABLE_SDL OFF CACHE BOOL "" FORCE)
+  FetchContent_MakeAvailable(pe_de265)
+  list(PREPEND CMAKE_MODULE_PATH "${CMAKE_CURRENT_LIST_DIR}")
+  set(ENABLE_PLUGIN_LOADING OFF CACHE BOOL "" FORCE)
+  set(WITH_LIBDE265 ON CACHE BOOL "" FORCE)
+  set(WITH_LIBDE265_PLUGIN OFF CACHE BOOL "" FORCE)
+  foreach(codec X265 KVAZAAR UVG266 VVDEC VVENC OpenH264_DECODER DAV1D AOM_DECODER
+      AOM_ENCODER SvtEnc RAV1E JPEG_DECODER JPEG_ENCODER OpenJPEG_ENCODER
+      OpenJPEG_DECODER FFMPEG_DECODER OPENJPH_ENCODER LIBSHARPYUV)
+    set(WITH_${codec} OFF CACHE BOOL "" FORCE)
+  endforeach()
+  set(WITH_EXAMPLES OFF CACHE BOOL "" FORCE)
+  set(WITH_GDK_PIXBUF OFF CACHE BOOL "" FORCE)
+  set(WITH_HEADER_COMPRESSION OFF CACHE BOOL "" FORCE)
+  FetchContent_MakeAvailable(pe_heif)
+  target_include_directories(heif INTERFACE
+    "$<BUILD_INTERFACE:${pe_heif_SOURCE_DIR}/libheif/api>"
+    "$<BUILD_INTERFACE:${pe_heif_BINARY_DIR}>")
+  add_library(PkgConfig::HEIF ALIAS heif)
+  set(HEIF_FOUND TRUE)
+endif()

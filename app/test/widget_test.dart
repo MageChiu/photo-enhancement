@@ -3,7 +3,8 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:photo_enhancement/main.dart';
 
 void main() {
-  testWidgets('editor opens without loading a native image library', (tester) async {
+  testWidgets('editor opens without loading a native image library',
+      (tester) async {
     await tester.pumpWidget(const PhotoApp());
     await tester.pump();
     expect(find.text('光屿'), findsOneWidget);

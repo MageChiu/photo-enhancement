@@ -26,7 +26,7 @@ typedef enum pe_format { PE_JPEG = 1, PE_PNG = 2, PE_HEIF = 3 } pe_format;
 
 typedef struct pe_decode_options {
   uint32_t max_edge;       /* 0 = full resolution; preview typically 1600 */
-  uint32_t max_pixels;     /* checked before allocation, including RAW sensor */
+  uint32_t max_pixels;     /* decoded pixel bound; scaled JPEG uses scaled size; RAW includes sensor */
   uint64_t max_file_bytes;
 } pe_decode_options;
 
@@ -51,6 +51,43 @@ typedef struct pe_border {
   char font_path[1024];   /* required only for text; no OS font lookup */
 } pe_border;
 
+/* Additive frame extension; pe_border layout remains unchanged for old callers.
+ * fields bits: model=1, focal=2, aperture=4, shutter=8, ISO=16, date=32,
+ * custom text=64. Missing metadata is omitted. layout: centered=0, split=1,
+ * stacked=2. brand: none=0, EXIF auto=1, Sony=2, Fujifilm=3, Hasselblad=4.
+ * Brand names are text labels, not bundled official logo artwork.
+ * Optional PNG logo: <=4MiB, <=1M pixels, downsampled to max_edge=512. */
+typedef struct pe_frame {
+  pe_border border;
+  uint32_t fields, layout, brand;
+  char logo_path[1024];
+} pe_frame;
+
+/* Additive style extension. kind: 0=ordinary LUT, 1=Hanjun. All effects are
+ * blended by the existing LUT strength. Adaptation uses current decoded pixels,
+ * not editing history or a claim about the scene's true white balance. */
+typedef struct pe_look {
+  uint32_t kind, adaptive;
+  double adaptation, texture, vignette, grain; /* each [0,1] */
+} pe_look;
+typedef struct pe_look_analysis {
+  double exposure, temperature, confidence, median; /* bounded suggestions */
+} pe_look_analysis;
+
+/* Additive ABI v1 extension. HSL centers: red, orange, yellow, green, aqua,
+ * blue, purple, magenta. Curve output values at x = 0,.25,.5,.75,1.
+ * Hue controls are normalized; split hues are turns [0,1]. */
+typedef struct pe_effects {
+  double hue[8];             /* [-1,1], maximum shift +/-30 degrees */
+  double saturation[8];      /* [-1,1] */
+  double luminance[8];       /* [-1,1] */
+  double curve[5];           /* [0,1], piecewise-linear RGB master curve */
+  double shadow_hue, shadow_strength, highlight_hue, highlight_strength;
+  double balance;            /* [-1,1] */
+  double sharpen, radius;    /* [0,2], radius [1,3] pixels */
+  double denoise_luma, denoise_chroma; /* [0,1], edge-aware 3x3 smoothing */
+} pe_effects;
+
 typedef struct pe_image_info {
   uint32_t width;
   uint32_t height;
@@ -65,11 +102,15 @@ typedef struct pe_image_info {
 } pe_image_info;
 
 PE_API uint32_t pe_abi_version(void);
+/* Returns a fresh device/headroom-based working budget; preview != 0 caps
+ * it for interactive work. This is an estimate, not an allocation guarantee. */
+PE_API uint64_t pe_memory_budget(uint32_t preview);
 PE_API const char* pe_last_error(void);
 PE_API const char* pe_capabilities(void);
 PE_API void pe_default_decode_options(pe_decode_options* options);
 PE_API void pe_default_params(pe_params* params);
 PE_API void pe_default_border(pe_border* border);
+PE_API void pe_default_effects(pe_effects* effects);
 PE_API pe_status pe_decode(const char* path, const pe_decode_options* options, pe_image** out);
 /* RGBA16 input is LINEAR sRGB, straight alpha; copied before returning. */
 PE_API pe_status pe_image_create(uint32_t width, uint32_t height, const uint16_t* rgba, pe_image** out);
@@ -78,6 +119,7 @@ PE_API pe_status pe_image_get_info(const pe_image* image, pe_image_info* info);
 PE_API pe_status pe_image_copy_rgba8(const pe_image* image, uint8_t* buffer, uint64_t capacity);
 PE_API pe_status pe_resize(const pe_image* image, uint32_t max_edge, pe_image** out);
 PE_API pe_status pe_apply_params(const pe_image* image, const pe_params* params, pe_image** out);
+PE_API pe_status pe_apply_effects(const pe_image* image, const pe_effects* effects, pe_image** out);
 PE_API pe_status pe_lut_load(const char* path, pe_lut** out);
 PE_API pe_status pe_apply_lut(const pe_image* image, const pe_lut* lut, double strength, pe_image** out);
 PE_API pe_status pe_add_border(const pe_image* image, const pe_border* border, pe_image** out);
@@ -86,6 +128,29 @@ PE_API pe_status pe_add_border(const pe_image* image, const pe_border* border, p
  * Encoded orientation is always 1. PNG output uses 16-bit display sRGB. */
 PE_API pe_status pe_encode(const pe_image* image, const char* path, pe_format format,
                           uint32_t quality, uint32_t include_metadata);
+/* Budgeted full-resolution pipeline. Baseline JPEG->JPEG/PNG can spill pixels
+ * to a private temporary file and render strips (including orientation/halo).
+ * memory_budget=0 selects the automatic device policy. Other formats fail
+ * before full decoding if the estimated pipeline exceeds the budget. */
+PE_API pe_status pe_process_file(const char* source, const char* destination,
+    const pe_decode_options* options, const pe_params* params, const pe_effects* effects,
+    const char* lut_path, double strength, const pe_border* border, pe_format format,
+    uint32_t quality, uint32_t include_metadata, uint64_t memory_budget);
+PE_API pe_status pe_add_frame(const pe_image* image, const pe_frame* frame, pe_image** out);
+PE_API pe_status pe_process_file_frame(const char* source, const char* destination,
+    const pe_decode_options* options, const pe_params* params, const pe_effects* effects,
+    const char* lut_path, double strength, const pe_frame* frame, pe_format format,
+    uint32_t quality, uint32_t include_metadata, uint64_t memory_budget);
+PE_API pe_status pe_analyze_look(const pe_image* source, pe_look_analysis* analysis);
+/* Region coordinates exclude the frame and describe the complete oriented
+ * image. Spatial texture needs 2px input halo, in addition to earlier effects. */
+PE_API pe_status pe_apply_look(const pe_image* image, const pe_lut* lut, double strength,
+    const pe_look* look, const pe_look_analysis* analysis, uint32_t full_width,
+    uint32_t full_height, uint32_t origin_y, pe_image** out);
+PE_API pe_status pe_process_file_look(const char* source, const char* destination,
+    const pe_decode_options* options, const pe_params* params, const pe_effects* effects,
+    const char* lut_path, double strength, const pe_frame* frame, const pe_look* look,
+    pe_format format, uint32_t quality, uint32_t include_metadata, uint64_t memory_budget);
 PE_API void pe_image_free(pe_image* image);
 PE_API void pe_lut_free(pe_lut* lut);
 
