@@ -1,3 +1,20 @@
+# Project-specific build outputs and private samples
+build/
+dist/
+.tools/
+.dart_tool/
+.flutter-plugins*
+.packages
+**/build/
+**/Flutter/ephemeral/
+**/Pods/
+**/.symlinks/
+**/local.properties
+.DS_Store
+samples/private/
+*.dSYM/
+__pycache__/
+
 # Miscellaneous
 *.class
 *.lock
@@ -117,3 +134,6 @@ app.*.symbols
 !**/ios/**/default.perspectivev3
 !/packages/flutter_tools/test/data/dart_dependencies_test/**/.packages
 !/dev/ci/**/Gemfile.lock
+
+# Keep the application dependency versions reproducible.
+!/app/pubspec.lock

@@ -1,0 +1,20 @@
+[
+  {
+    "name": "纪实 · 日常",
+    "description": "克制对比、轻微去饱和，保留现场感",
+    "lut": "documentary.cube",
+    "recipe": {"version": 1, "params": {"contrast": 0.06, "highlights": -0.12, "shadows": 0.08, "saturation": -0.06}, "strength": 0.7}
+  },
+  {
+    "name": "冷影 · 街头",
+    "description": "偏冷阴影与柔和高光，适合城市光线",
+    "lut": "cool_street.cube",
+    "recipe": {"version": 1, "params": {"contrast": 0.08, "highlights": -0.16, "shadows": 0.1, "vibrance": -0.06}, "strength": 0.7}
+  },
+  {
+    "name": "暖调 · 人文",
+    "description": "温暖中间调、自然肤色，适合人物与生活",
+    "lut": "warm_story.cube",
+    "recipe": {"version": 1, "params": {"contrast": 0.03, "highlights": -0.08, "temperature": 0.08, "saturation": -0.04}, "strength": 0.65}
+  }
+]
