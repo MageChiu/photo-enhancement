@@ -1,0 +1,182 @@
+name: Build and release
+
+on:
+  push:
+    branches: ['release-*', 'dev/dev-v*']
+    tags: ['*']
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: build-release-${{ github.ref }}
+  cancel-in-progress: ${{ github.ref_type == 'branch' && startsWith(github.ref_name, 'dev/dev-v') }}
+
+jobs:
+  macos:
+    name: macOS (${{ matrix.arch }}) and regression tests
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - runner: macos-15
+            arch: arm64
+          - runner: macos-15-intel
+            arch: x86_64
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 90
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          submodules: recursive
+          persist-credentials: false
+      - uses: subosito/flutter-action@v2
+        with:
+          flutter-version-file: app/.fvmrc
+          cache: true
+      - name: Install native dependencies
+        run: brew install cmake pkgconf jpeg-turbo libpng little-cms2 freetype webp libheif
+      - name: Build, test and package
+        env:
+          ARCH: ${{ matrix.arch }}
+        run: |
+          sh scripts/build_macos.sh --verify
+          mkdir -p artifacts
+          cp dist/光屿-macOS.zip "artifacts/photo-enhancement-macos-${ARCH}.zip"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: package-macos-${{ matrix.arch }}
+          path: artifacts/*
+          if-no-files-found: error
+          retention-days: 14
+
+  android:
+    name: Android (arm64-v8a, x86_64)
+    runs-on: ubuntu-24.04
+    timeout-minutes: 90
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          submodules: recursive
+          persist-credentials: false
+      - uses: actions/setup-java@v5
+        with:
+          distribution: temurin
+          java-version: '17'
+      - uses: subosito/flutter-action@v2
+        with:
+          flutter-version-file: app/.fvmrc
+          cache: true
+      - uses: android-actions/setup-android@v3
+      - name: Install pinned Android tools
+        run: sdkmanager 'platforms;android-36' 'build-tools;36.0.0' 'cmake;3.22.1' 'ndk;28.2.13676358'
+      - name: Build APKs
+        run: |
+          python3 scripts/generate_luts.py
+          sh scripts/build_android.sh --split-per-abi
+          mkdir -p artifacts
+          for abi in arm64-v8a x86_64; do
+            cp "app/build/app/outputs/flutter-apk/app-${abi}-release.apk" "artifacts/photo-enhancement-android-${abi}.apk"
+          done
+      - uses: actions/upload-artifact@v4
+        with:
+          name: package-android
+          path: artifacts/*
+          if-no-files-found: error
+          retention-days: 14
+
+  ios:
+    name: iOS (unsigned device and simulator)
+    runs-on: macos-15
+    timeout-minutes: 120
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          submodules: recursive
+          persist-credentials: false
+      - uses: subosito/flutter-action@v2
+        with:
+          flutter-version-file: app/.fvmrc
+          cache: true
+      - name: Install build tools
+        run: brew install cmake
+      - name: Build device and simulator native libraries
+        run: |
+          python3 scripts/generate_luts.py
+          sh scripts/check_toolchains.sh ios
+          sh scripts/build_ios_core.sh
+      - name: Build and archive unsigned device application
+        working-directory: app
+        run: |
+          flutter pub get
+          flutter build ios --release --no-codesign
+          mkdir -p ../artifacts
+          ditto -c -k --sequesterRsrc --keepParent build/ios/iphoneos/Runner.app ../artifacts/photo-enhancement-ios-arm64-unsigned.zip
+      - name: Build and archive simulator application
+        working-directory: app
+        run: |
+          flutter build ios --simulator --debug
+          ditto -c -k --sequesterRsrc --keepParent build/ios/iphonesimulator/Runner.app ../artifacts/photo-enhancement-ios-simulator-arm64.zip
+      - uses: actions/upload-artifact@v4
+        with:
+          name: package-ios
+          path: artifacts/*
+          if-no-files-found: error
+          retention-days: 14
+
+  ohos:
+    name: HarmonyOS (arm64-v8a)
+    # Required for both dev and release: see docs/GitHub流水线.md for runner setup.
+    runs-on: [self-hosted, ohos]
+    timeout-minutes: 90
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          submodules: recursive
+          persist-credentials: false
+      - name: Build and test with the runner's ohos Flutter SDK
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 scripts/generate_luts.py
+          sh scripts/build_ohos.sh
+          (cd app && "$OHOS_FLUTTER" analyze && "$OHOS_FLUTTER" test)
+          python3 scripts/collect_ohos_artifacts.py
+      - uses: actions/upload-artifact@v4
+        with:
+          name: package-ohos
+          path: artifacts/*
+          if-no-files-found: error
+          retention-days: 14
+
+  release:
+    name: Validate release assets and publish
+    needs: [macos, android, ios, ohos]
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          persist-credentials: false
+      - uses: actions/download-artifact@v4
+        with:
+          pattern: package-*
+          merge-multiple: true
+          path: artifacts
+      - name: Validate complete asset set and generate checksums (also on dev)
+        run: python3 scripts/prepare_release.py
+      - uses: actions/upload-artifact@v4
+        with:
+          name: release-bundle
+          path: artifacts/*
+          if-no-files-found: error
+          retention-days: 14
+      - name: Publish GitHub Release
+        if: github.event_name == 'push' && (github.ref_type == 'tag' || startsWith(github.ref_name, 'release-'))
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+        run: bash scripts/publish_release.sh

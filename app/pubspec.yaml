@@ -21,3 +21,5 @@ flutter:
   assets:
     - assets/presets/
     - assets/luts/
+    - assets/frame_marks/
+    - assets/frame_fonts/

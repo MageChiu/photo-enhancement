@@ -65,6 +65,26 @@ final class NativeFrame extends Struct {
   external Array<Uint8> logoPath;
 }
 
+final class NativeFrameAdjustments extends Struct {
+  @Array(13)
+  external Array<Double> positions;
+  @Uint32()
+  external int enabled;
+  @Uint32()
+  external int infoAlign;
+  @Uint32()
+  external int captionAlign;
+  @Array(1024)
+  external Array<Uint8> accentPath;
+}
+
+final class NativeLensInfo extends Struct {
+  @Array(128)
+  external Array<Uint8> make;
+  @Array(256)
+  external Array<Uint8> model;
+}
+
 final class NativeLook extends Struct {
   @Uint32()
   external int kind;
@@ -141,7 +161,8 @@ void writeText(Array<Uint8> array, int capacity, String value) {
 class Bindings {
   Bindings(String? libraryPath) : library = _open(libraryPath) {
     if (abiVersion() != 1) throw StateError('图像内核 ABI 不匹配，请重新构建');
-    if (!library.providesSymbol('pe_process_file_look')) {
+    if (!library.providesSymbol('pe_process_file_advanced') ||
+        !library.providesSymbol('pe_read_lens_info')) {
       throw StateError('图像内核版本过旧，请重新运行构建脚本并完整重启应用');
     }
   }
@@ -259,6 +280,33 @@ class Bindings {
           Pointer<Pointer<NativeImage>>),
       int Function(Pointer<NativeImage>, Pointer<NativeFrame>,
           Pointer<Pointer<NativeImage>>)>('pe_add_frame');
+  late final addFrameAdvanced = library.lookupFunction<
+      Int32 Function(Pointer<NativeImage>, Pointer<NativeFrame>,
+          Pointer<NativeFrameAdjustments>, Pointer<Pointer<NativeImage>>),
+      int Function(
+          Pointer<NativeImage>,
+          Pointer<NativeFrame>,
+          Pointer<NativeFrameAdjustments>,
+          Pointer<Pointer<NativeImage>>)>('pe_add_frame_advanced');
+  late final readLensInfo = library.lookupFunction<
+      Int32 Function(Pointer<Utf8>, Uint64, Pointer<NativeLensInfo>),
+      int Function(
+          Pointer<Utf8>, int, Pointer<NativeLensInfo>)>('pe_read_lens_info');
+  Map<String, String> lensInfo(String path) => using((arena) {
+        final lens = arena<NativeLensInfo>();
+        check(readLensInfo(
+            path.toNativeUtf8(allocator: arena),
+            Platform.isIOS ||
+                    Platform.isAndroid ||
+                    Platform.operatingSystem == 'ohos'
+                ? 256 * 1024 * 1024
+                : 512 * 1024 * 1024,
+            lens));
+        return {
+          'lensMake': readText(lens.ref.make, 128),
+          'lensModel': readText(lens.ref.model, 256)
+        };
+      });
   late final resizeImage = library.lookupFunction<
       Int32 Function(
           Pointer<NativeImage>, Uint32, Pointer<Pointer<NativeImage>>),
@@ -346,6 +394,38 @@ class Bindings {
           int,
           int,
           int)>('pe_process_file_look');
+
+  late final processFileAdvanced = library.lookupFunction<
+      Int32 Function(
+          Pointer<Utf8>,
+          Pointer<Utf8>,
+          Pointer<DecodeOptions>,
+          Pointer<NativeParams>,
+          Pointer<NativeEffects>,
+          Pointer<Utf8>,
+          Double,
+          Pointer<NativeFrame>,
+          Pointer<NativeLook>,
+          Pointer<NativeFrameAdjustments>,
+          Int32,
+          Uint32,
+          Uint32,
+          Uint64),
+      int Function(
+          Pointer<Utf8>,
+          Pointer<Utf8>,
+          Pointer<DecodeOptions>,
+          Pointer<NativeParams>,
+          Pointer<NativeEffects>,
+          Pointer<Utf8>,
+          double,
+          Pointer<NativeFrame>,
+          Pointer<NativeLook>,
+          Pointer<NativeFrameAdjustments>,
+          int,
+          int,
+          int,
+          int)>('pe_process_file_advanced');
 
   void check(int status) {
     if (status != 0) {

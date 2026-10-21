@@ -56,12 +56,27 @@ typedef struct pe_border {
  * custom text=64. Missing metadata is omitted. layout: centered=0, split=1,
  * stacked=2. brand: none=0, EXIF auto=1, Sony=2, Fujifilm=3, Hasselblad=4.
  * Brand names are text labels, not bundled official logo artwork.
- * Optional PNG logo: <=4MiB, <=1M pixels, downsampled to max_edge=512. */
+ * Optional PNG logo: <=4MiB, <=1M pixels. */
 typedef struct pe_frame {
   pe_border border;
   uint32_t fields, layout, brand;
   char logo_path[1024];
 } pe_frame;
+
+/* Additive advanced frame API; all v1 structs keep their original layout.
+ * positions: logo x/y/scale, accent x/y/scale, info x/y/size/line spacing,
+ * caption x/y/size. x/y in [0,1] within footer; sizes relative to footer height.
+ * Text x positions its fixed-width layout box; alignment: left=0, center=1, right=2.
+ * The entire artwork is clamped inside the footer. */
+typedef struct pe_frame_adjustments {
+  double positions[13];
+  uint32_t enabled, info_align, caption_align;
+  char accent_path[1024];
+} pe_frame_adjustments;
+typedef struct pe_lens_info { char make[128], model[256]; } pe_lens_info;
+PE_API pe_status pe_read_lens_info(const char* path, uint64_t max_file_bytes, pe_lens_info* out);
+PE_API pe_status pe_add_frame_advanced(const pe_image* image, const pe_frame* frame,
+    const pe_frame_adjustments* adjustments, pe_image** out);
 
 /* Additive style extension. kind: 0=ordinary LUT, 1=Hanjun. All effects are
  * blended by the existing LUT strength. Adaptation uses current decoded pixels,
@@ -152,6 +167,11 @@ PE_API pe_status pe_process_file_look(const char* source, const char* destinatio
     const char* lut_path, double strength, const pe_frame* frame, const pe_look* look,
     pe_format format, uint32_t quality, uint32_t include_metadata, uint64_t memory_budget);
 PE_API void pe_image_free(pe_image* image);
+PE_API pe_status pe_process_file_advanced(const char* source, const char* destination,
+    const pe_decode_options* options, const pe_params* params, const pe_effects* effects,
+    const char* lut_path, double strength, const pe_frame* frame, const pe_look* look,
+    const pe_frame_adjustments* adjustments, pe_format format, uint32_t quality,
+    uint32_t include_metadata, uint64_t memory_budget);
 PE_API void pe_lut_free(pe_lut* lut);
 
 #ifdef __cplusplus

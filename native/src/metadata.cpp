@@ -45,6 +45,8 @@ struct Tiff {
         case 0x8827: result.info.iso = uint32_t(number); break;
         case 0x9003: text(result.info.captured_at, sizeof(result.info.captured_at)); break;
         case 0x920a: result.info.focal_length = number; break;
+        case 0xa433: text(result.lens.make, sizeof(result.lens.make)); break;
+        case 0xa434: text(result.lens.model, sizeof(result.lens.model)); break;
         case 0x8769: if (!nested && type == 4 && n == 1) ifd(uint32_t(number), result, true); break;
         default: break;
       }
@@ -98,7 +100,7 @@ Metadata read_exif(const uint8_t* data, size_t size) {
   return result;
 }
 
-std::vector<uint8_t> write_exif(const pe_image_info& info) {
+std::vector<uint8_t> write_exif(const pe_image_info& info,const pe_lens_info* lens) {
   std::vector<uint8_t> out{'I', 'I', 42, 0, 8, 0, 0, 0};
   std::vector<Entry> root{integer_entry(0x0112, 1, true),
       string_entry(0x0131, "Photo Enhancement 0.1"), integer_entry(0x8769, 0)};
@@ -111,6 +113,8 @@ std::vector<uint8_t> write_exif(const pe_image_info& info) {
   if (info.shutter > 0) exif.push_back(rational_entry(0x829a, info.shutter));
   if (info.focal_length > 0) exif.push_back(rational_entry(0x920a, info.focal_length));
   if (info.captured_at[0]) exif.push_back(string_entry(0x9003, info.captured_at));
+  if(lens && lens->make[0])exif.push_back(string_entry(0xa433,lens->make));
+  if(lens && lens->model[0])exif.push_back(string_entry(0xa434,lens->model));
   uint32_t offset = append_ifd(out, exif);
   for (uint16_t i = 0; i < root.size(); ++i) {
     size_t p = 10 + size_t(i) * 12;

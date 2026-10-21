@@ -142,7 +142,7 @@ std::unique_ptr<pe_image> jpeg_decode(const std::string& path, const pe_decode_o
   jpeg_finish_decompress(&state->codec);
   auto out = image(w, h);
   from_display(*out, state->pixels.data(), state->icc);
-  state->meta.info.width = w; state->meta.info.height = h; out->info = state->meta.info;
+  state->meta.info.width = w; state->meta.info.height = h; out->info = state->meta.info; out->lens=state->meta.lens;
   orient(*out, state->meta.orientation);
   return out;
 }
@@ -207,7 +207,7 @@ std::unique_ptr<pe_image> png_decode(const Bytes& bytes, const pe_decode_options
   else for (size_t i = 0; i < pixels.size(); ++i) pixels[i] = uint16_t(state->data[i]) * 257;
   from_display(*out, pixels.data(), state->icc);
   auto meta = read_exif(state->exif.data(), state->exif.size());
-  meta.info.width = w; meta.info.height = h; out->info = meta.info;
+  meta.info.width = w; meta.info.height = h; out->info = meta.info; out->lens=meta.lens;
   orient(*out, meta.orientation);
   return out;
 }
@@ -291,6 +291,8 @@ std::unique_ptr<pe_image> raw_decode(const std::string& path, const pe_decode_op
   auto& info = out->info; info.is_raw = 1;
   std::snprintf(info.make, sizeof(info.make), "%s", raw.imgdata.idata.make);
   std::snprintf(info.model, sizeof(info.model), "%s", raw.imgdata.idata.model);
+  std::snprintf(out->lens.make,sizeof(out->lens.make),"%s",raw.imgdata.lens.LensMake);
+  std::snprintf(out->lens.model,sizeof(out->lens.model),"%s",raw.imgdata.lens.Lens[0]?raw.imgdata.lens.Lens:raw.imgdata.lens.makernotes.Lens);
   info.iso = uint32_t(std::max(0.f, raw.imgdata.other.iso_speed));
   info.aperture = raw.imgdata.other.aperture; info.shutter = raw.imgdata.other.shutter;
   info.focal_length = raw.imgdata.other.focal_len;
@@ -327,7 +329,7 @@ std::unique_ptr<pe_image> webp_decode(const Bytes& bytes, const pe_decode_option
   std::vector<uint16_t> pixels(rgba.size());
   for (size_t i = 0; i < pixels.size(); ++i) pixels[i] = uint16_t(rgba[i]) * 257;
   from_display(*out, pixels.data(), icc);
-  meta.info.width = out->info.width; meta.info.height = out->info.height; out->info = meta.info;
+  meta.info.width = out->info.width; meta.info.height = out->info.height; out->info = meta.info; out->lens=meta.lens;
   orient(*out, meta.orientation);
   return out;
 }
@@ -408,7 +410,7 @@ std::unique_ptr<pe_image> heif_decode(const Bytes& bytes, const pe_decode_option
       uint32_t offset = uint32_t(exif[0]) << 24 | uint32_t(exif[1]) << 16 | uint32_t(exif[2]) << 8 | exif[3];
       if (uint64_t(offset) + 4 <= exif.size()) {
         auto meta = read_exif(exif.data() + 4 + offset, exif.size() - 4 - offset);
-        meta.info.width = uint32_t(w); meta.info.height = uint32_t(h); out->info = meta.info;
+        meta.info.width = uint32_t(w); meta.info.height = uint32_t(h); out->info = meta.info; out->lens=meta.lens;
       }
     }
   }
@@ -439,7 +441,7 @@ struct JpegWrite {
 };
 struct JpegRows final : RowWriter {
   std::unique_ptr<JpegWrite> state = std::make_unique<JpegWrite>();
-  explicit JpegRows(FILE* file, const pe_image_info& info, uint32_t quality, bool metadata) {
+  explicit JpegRows(FILE* file, const pe_image_info& info, uint32_t quality, bool metadata,const pe_lens_info* lens) {
     auto& c = state->codec;
     c.err = jpeg_std_error(&state->error.manager); state->error.manager.error_exit = jpeg_error;
     if(setjmp(state->error.jump)) throw Error(PE_IO_ERROR,state->error.message);
@@ -448,7 +450,7 @@ struct JpegRows final : RowWriter {
     jpeg_set_defaults(&c);jpeg_set_quality(&c,int(quality),TRUE);
     for(int n=0;n<3;++n){c.comp_info[n].h_samp_factor=1;c.comp_info[n].v_samp_factor=1;}
     jpeg_start_compress(&c,TRUE);
-    if(metadata){state->exif=write_exif(info);state->exif.insert(state->exif.begin(),{'E','x','i','f',0,0});
+    if(metadata){state->exif=write_exif(info,lens);state->exif.insert(state->exif.begin(),{'E','x','i','f',0,0});
       jpeg_write_marker(&c,JPEG_APP0+1,state->exif.data(),unsigned(state->exif.size()));}
     state->row.resize(size_t(info.width)*3);
   }
@@ -468,7 +470,7 @@ struct JpegRows final : RowWriter {
 struct PngRows final : RowWriter {
   std::unique_ptr<PngState> state = std::make_unique<PngState>();
   uint32_t width;
-  explicit PngRows(FILE* file,const pe_image_info& info,bool metadata):width(info.width){
+  explicit PngRows(FILE* file,const pe_image_info& info,bool metadata,const pe_lens_info* lens):width(info.width){
     state->writing=true;state->codec=png_create_write_struct(PNG_LIBPNG_VER_STRING,nullptr,nullptr,nullptr);
     require(state->codec,"Cannot allocate PNG encoder",PE_OUT_OF_MEMORY);
     state->info=png_create_info_struct(state->codec);require(state->info,"Cannot allocate PNG metadata",PE_OUT_OF_MEMORY);
@@ -476,7 +478,7 @@ struct PngRows final : RowWriter {
     png_init_io(state->codec,file);png_set_IHDR(state->codec,state->info,info.width,info.height,16,PNG_COLOR_TYPE_RGBA,PNG_INTERLACE_NONE,PNG_COMPRESSION_TYPE_DEFAULT,PNG_FILTER_TYPE_DEFAULT);
     png_set_sRGB(state->codec,state->info,PNG_sRGB_INTENT_RELATIVE);
 #ifdef PNG_eXIf_SUPPORTED
-    if(metadata){state->exif=write_exif(info);png_set_eXIf_1(state->codec,state->info,png_uint_32(state->exif.size()),state->exif.data());}
+    if(metadata){state->exif=write_exif(info,lens);png_set_eXIf_1(state->codec,state->info,png_uint_32(state->exif.size()),state->exif.data());}
 #endif
     png_write_info(state->codec,state->info);state->data.resize(size_t(width)*8);
   }
@@ -507,14 +509,15 @@ struct HeifRows final : RowWriter {
   std::unique_ptr<heif_image, decltype(&heif_image_release)> bitmap{nullptr, heif_image_release};
   FILE* file;
   pe_image_info info;
+  pe_lens_info lens{};
   bool metadata, grid;
   std::unique_ptr<heif_image_handle, decltype(&heif_image_handle_release)>
       handle{nullptr, heif_image_handle_release};
   uint32_t written = 0;
   int stride = 0;
   uint8_t* plane = nullptr;
-  HeifRows(FILE* output, const pe_image_info& value, uint32_t quality, bool keep_metadata)
-      : file(output), info(value), metadata(keep_metadata), grid(heif_grid(value.width,value.height)) {
+  HeifRows(FILE* output, const pe_image_info& value, uint32_t quality, bool keep_metadata,const pe_lens_info* lens_info)
+      : file(output), info(value), lens(lens_info?*lens_info:pe_lens_info{}), metadata(keep_metadata), grid(heif_grid(value.width,value.height)) {
     context.reset(heif_context_alloc());
     require(bool(context), "Cannot allocate HEIF context", PE_OUT_OF_MEMORY);
     heif_encoder* raw_encoder = nullptr;
@@ -600,7 +603,7 @@ struct HeifRows final : RowWriter {
       handle.reset(raw_handle);
     }
     if (metadata) {
-      auto exif = write_exif(info);
+      auto exif = write_exif(info,&lens);
       heif_check(heif_context_add_exif_metadata(context.get(), handle.get(), exif.data(), int(exif.size())));
     }
     heif_writer writer{1, heif_output};
@@ -610,15 +613,33 @@ struct HeifRows final : RowWriter {
 #endif
 }
 
-std::unique_ptr<RowWriter> row_writer(FILE* file,const pe_image_info& info,pe_format format,uint32_t quality,bool metadata){
-  if(format==PE_JPEG)return std::make_unique<JpegRows>(file,info,quality,metadata);
-  if(format==PE_PNG)return std::make_unique<PngRows>(file,info,metadata);
+std::unique_ptr<RowWriter> row_writer(FILE* file,const pe_image_info& info,pe_format format,uint32_t quality,bool metadata,const pe_lens_info* lens){
+  if(format==PE_JPEG)return std::make_unique<JpegRows>(file,info,quality,metadata,lens);
+  if(format==PE_PNG)return std::make_unique<PngRows>(file,info,metadata,lens);
 #ifdef PE_HAVE_HEIF
-  if(format==PE_HEIF)return std::make_unique<HeifRows>(file,info,quality,metadata);
+  if(format==PE_HEIF)return std::make_unique<HeifRows>(file,info,quality,metadata,lens);
 #endif
   throw Error(PE_UNSUPPORTED,"Requested output codec is not enabled in this build");
 }
 
+pe_lens_info chunk_lens(const std::string& path,uint64_t bytes,bool png) {
+  std::ifstream file(path,std::ios::binary);uint64_t at=png?8:12;
+  auto be=[](const unsigned char* p){return uint32_t(p[0])<<24|uint32_t(p[1])<<16|uint32_t(p[2])<<8|p[3];};
+  while(at<=bytes && bytes-at>=8){
+    unsigned char header[8]{};file.seekg(std::streamoff(at));file.read(reinterpret_cast<char*>(header),8);if(!file)return {};
+    const uint32_t n=png?be(header):uint32_t(header[4])|uint32_t(header[5])<<8|uint32_t(header[6])<<16|uint32_t(header[7])<<24;
+    const uint64_t overhead=png?12:8;
+    if(bytes-at<overhead || uint64_t(n)>bytes-at-overhead)return {};
+    if(std::memcmp(header+(png?4:0),png?"eXIf":"EXIF",4)==0){
+      require(n<=1024*1024,"Lens EXIF block is too large",PE_LIMIT_EXCEEDED);
+      Bytes data(n);file.read(reinterpret_cast<char*>(data.data()),n);if(!file)return {};
+      return read_exif(data.data(),data.size()).lens;
+    }
+    if(png && std::memcmp(header+4,"IEND",4)==0)break;
+    at+=uint64_t(n)+overhead+(png?0:n%2);
+  }
+  return {};
+}
 ImageProbe probe_image(const std::string& path,uint64_t file_limit){
   ImageProbe probe;std::error_code error;probe.file_bytes=std::filesystem::file_size(path,error);
   require(!error,"Cannot open image: "+path,PE_IO_ERROR);
@@ -631,11 +652,13 @@ ImageProbe probe_image(const std::string& path,uint64_t file_limit){
   }else if(png_sig_cmp(header.data(),0,8)==0){
     auto integer=[&](int i){return uint32_t(header[i])<<24|uint32_t(header[i+1])<<16|uint32_t(header[i+2])<<8|header[i+3];};
     probe.metadata.info.width=integer(16);probe.metadata.info.height=integer(20);probe.format="PNG";
+    probe.metadata.lens=chunk_lens(path,probe.file_bytes,true);
   }
 #ifdef PE_HAVE_WEBP
   else if(std::memcmp(header.data(),"RIFF",4)==0 && std::memcmp(header.data()+8,"WEBP",4)==0){
     int w=0,h=0;require(WebPGetInfo(header.data(),header.size(),&w,&h),"Invalid WebP header",PE_DECODE_ERROR);
     probe.metadata.info.width=uint32_t(w);probe.metadata.info.height=uint32_t(h);probe.format="WebP";
+    probe.metadata.lens=chunk_lens(path,probe.file_bytes,false);
   }
 #endif
 #ifdef PE_HAVE_HEIF
@@ -645,11 +668,23 @@ ImageProbe probe_image(const std::string& path,uint64_t file_limit){
     heif_check(heif_context_read_from_file(context.get(),path.c_str(),nullptr));
     heif_image_handle* handle=nullptr;heif_check(heif_context_get_primary_image_handle(context.get(),&handle));
     probe.metadata.info.width=uint32_t(heif_image_handle_get_width(handle));probe.metadata.info.height=uint32_t(heif_image_handle_get_height(handle));
+    heif_item_id id;
+    if(heif_image_handle_get_list_of_metadata_block_IDs(handle,"Exif",&id,1)==1){
+      const auto size=heif_image_handle_get_metadata_size(handle,id);
+      if(size>1024*1024){heif_image_handle_release(handle);throw Error(PE_LIMIT_EXCEEDED,"Lens EXIF block is too large");}
+      Bytes data(size);const auto status=heif_image_handle_get_metadata(handle,id,data.data());
+      if(status.code==heif_error_Ok && size>=4){
+        const uint32_t off=uint32_t(data[0])<<24|uint32_t(data[1])<<16|uint32_t(data[2])<<8|data[3];
+        if(uint64_t(off)+4<=size)probe.metadata.lens=read_exif(data.data()+4+off,size-4-off).lens;
+      }
+    }
     heif_image_handle_release(handle);probe.format="HEIF";
   }
 #endif
   else{
     LibRaw raw;const int status=raw.open_file(path.c_str());require(status==LIBRAW_SUCCESS,libraw_strerror(status),PE_UNSUPPORTED);
+    std::snprintf(probe.metadata.lens.make,sizeof(probe.metadata.lens.make),"%s",raw.imgdata.lens.LensMake);
+    std::snprintf(probe.metadata.lens.model,sizeof(probe.metadata.lens.model),"%s",raw.imgdata.lens.Lens[0]?raw.imgdata.lens.Lens:raw.imgdata.lens.makernotes.Lens);
     probe.metadata.info.width=raw.imgdata.sizes.width;probe.metadata.info.height=raw.imgdata.sizes.height;
     checked_pixels(raw.imgdata.sizes.raw_width,raw.imgdata.sizes.raw_height);
     probe.sensor_pixels=uint64_t(raw.imgdata.sizes.raw_width)*raw.imgdata.sizes.raw_height;probe.raw=true;
@@ -734,7 +769,7 @@ void encode(const pe_image& img, const std::string& path, pe_format format, uint
   require(format != PE_HEIF, "HEIF codec is not enabled in this build", PE_UNSUPPORTED);
 #endif
   Destination destination(path);
-  auto writer=row_writer(destination.file,img.info,format,quality,metadata);
+  auto writer=row_writer(destination.file,img.info,format,quality,metadata,&img.lens);
   writer->rows(img,0,img.info.height);writer->finish();
   destination.finish();
 }

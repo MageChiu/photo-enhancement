@@ -6,6 +6,7 @@ import 'package:flutter/foundation.dart';
 import 'models/edit.dart';
 import 'native/worker.dart';
 import 'services/presets.dart';
+import 'services/frame_resources.dart';
 
 class ExportException implements Exception {
   const ExportException(this.message);
@@ -21,6 +22,8 @@ class EditorController extends ChangeNotifier {
   final ImageWorker _previewWorker, _exportWorker;
   final history = EditHistory();
   final presetStore = PresetStore();
+  final frameResources = FrameResources();
+  Future<void>? _initializing;
   EditRecipe get recipe => history.current;
   String? sourcePath, error, notice;
   Map<String, dynamic> metadata = {};
@@ -39,30 +42,16 @@ class EditorController extends ChangeNotifier {
   EditRecipe? _gestureStart;
   final List<String> recentFiles = [];
 
-  Future<void> initialize() async {
+  Future<void> initialize() => _initializing ??= _initialize();
+
+  Future<void> _initialize() async {
     try {
       await presetStore.initialize();
-      final candidates = Platform.isMacOS
-          ? <String>[
-              '/System/Library/Fonts/Supplemental/Arial.ttf',
-              '/System/Library/Fonts/Helvetica.ttc',
-            ]
-          : Platform.isAndroid
-              ? <String>['/system/fonts/Roboto-Regular.ttf']
-              : <String>[];
-      for (final path in candidates) {
-        if (await File(path).exists()) {
-          if (sourcePath == null) {
-            history.reset(recipe.copyWith(fontPath: path));
-          } else if (recipe.fontPath.isEmpty) {
-            history.current = recipe.copyWith(fontPath: path);
-          }
-          break;
-        }
-      }
+      await frameResources.initialize(presetStore.directory);
       initialized = true;
-      if (sourcePath != null && preview != null)
+      if (sourcePath != null && preview != null) {
         unawaited(_loadThumbnails(sourcePath!));
+      }
     } catch (e) {
       error = '初始化失败：$e';
     }
@@ -199,8 +188,12 @@ class EditorController extends ChangeNotifier {
     final snapshot = recipe;
     _notify();
     try {
-      final result = await _previewWorker
-          .call('preview', {'path': path, 'recipe': snapshot.toJson()});
+      await initialize();
+      final result = await _previewWorker.call('preview', {
+        'path': path,
+        'recipe': snapshot.toJson(),
+        'frameAssets': frameResources.paths
+      });
       if (_disposed || revision != _revision) return;
       final edited = await _upload(result);
       late final ui.Image original;
@@ -335,6 +328,9 @@ class EditorController extends ChangeNotifier {
     final ownedPath = await presetStore.cacheLogo(await file.readAsBytes());
     change(recipe.copyWith(
         logoPath: ownedPath,
+        frameBrand: 0,
+        frameMark: '',
+        frameAccent: '',
         borderBottom: recipe.borderBottom > 0 ? recipe.borderBottom : .16));
   }
 
@@ -342,18 +338,42 @@ class EditorController extends ChangeNotifier {
       {int format = 1, int quality = 95, bool includeMetadata = true}) async {
     if (sourcePath == null || exporting) return;
     final path = sourcePath!, snapshot = recipe;
+    final sourceMake = metadata['make'] as String? ?? '';
+    var model = metadata['model'] as String? ?? '';
+    var lensMake = metadata['lensMake'] as String? ?? '';
+    var lensModel = metadata['lensModel'] as String? ?? '';
     exporting = true;
     error = null;
     notice = null;
     _notify();
     try {
+      await initialize();
+      // Inspect through the preview worker even when export is requested before
+      // the first preview has completed. Never infer a brand from the filename.
+      var make = sourceMake;
+      if ((snapshot.frameMark == 'auto' && make.isEmpty) ||
+          (snapshot.frameAccent == 'auto' &&
+              lensMake.isEmpty &&
+              lensModel.isEmpty)) {
+        final info = await _previewWorker
+            .call('inspect', {'path': path, 'recipe': snapshot.toJson()});
+        make = (info['info'] as Map)['make'] as String? ?? '';
+        model = (info['info'] as Map)['model'] as String? ?? '';
+        lensMake = (info['info'] as Map)['lensMake'] as String? ?? '';
+        lensModel = (info['info'] as Map)['lensModel'] as String? ?? '';
+      }
       await _exportWorker.call('export', {
         'path': path,
         'recipe': snapshot.toJson(),
         'destination': destination,
         'format': format,
         'quality': quality,
-        'metadata': includeMetadata
+        'metadata': includeMetadata,
+        'make': make,
+        'model': model,
+        'lensMake': lensMake,
+        'lensModel': lensModel,
+        'frameAssets': frameResources.paths
       });
       notice = '已导出：$destination';
     } catch (e) {

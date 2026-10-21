@@ -1,4 +1,5 @@
 #include "pe/pe.h"
+#include "../src/internal.hpp"
 #include "../src/raw_support.hpp"
 #include "../src/heif_support.hpp"
 #include <cstddef>
@@ -82,6 +83,48 @@ int main() {
   dir = fs::temp_directory_path() / ("photo-core-tests-" + std::to_string(getpid()));
   fs::create_directories(dir);
   std::vector<std::pair<std::string, std::function<void()>>> tests{
+    {"lens metadata survives JPEG PNG edits and excludes unknown fields", [] {
+      auto source=fixture(480,360);
+      std::strcpy(source->info.make,"SONY");std::strcpy(source->info.model,"ILCE-7RM5");
+      std::strcpy(source->lens.make,"SIGMA");std::strcpy(source->lens.model,"24-70mm F2.8 DG DN | Art");
+      pe_lens_info lens{};
+      for(auto format:{PE_JPEG,PE_PNG}){
+        const auto input=dir/(format==PE_JPEG?"lens.jpg":"lens.png");
+        ok(pe_encode(source.get(),input.c_str(),format,95,1));
+        ok(pe_read_lens_info(input.c_str(),16*1024*1024,&lens));
+        expect(std::string(lens.make)=="SIGMA" && std::string(lens.model)==source->lens.model);
+        auto decoded=decode(input);pe_params params;pe_default_params(&params);params.exposure=.1;
+        pe_image* raw=nullptr;ok(pe_apply_params(decoded.get(),&params,&raw));Image edited(raw,pe_image_free);
+        const auto output=dir/(format==PE_JPEG?"lens-edited.jpg":"lens-edited.png");
+        ok(pe_encode(edited.get(),output.c_str(),format,95,1));
+        ok(pe_read_lens_info(output.c_str(),16*1024*1024,&lens));expect(std::string(lens.make)=="SIGMA");
+        const auto stripped=dir/(format==PE_JPEG?"lens-private.jpg":"lens-private.png");
+        ok(pe_encode(edited.get(),stripped.c_str(),format,95,0));
+        ok(pe_read_lens_info(stripped.c_str(),16*1024*1024,&lens));expect(!lens.make[0] && !lens.model[0]);
+      }
+      expect(pe_read_lens_info(nullptr,1,&lens)==PE_INVALID_ARGUMENT && !lens.make[0]);
+    }},
+    {"advanced frame independent artwork matches strip export and validates bounds", [] {
+      auto source=fixture(480,360);std::strcpy(source->info.model,"Camera");source->info.iso=100;
+      const auto input=dir/"advanced-source.jpg";ok(pe_encode(source.get(),input.c_str(),PE_JPEG,95,1));source=decode(input);
+      pe_frame frame{};pe_default_border(&frame.border);frame.border.width=.04;frame.border.bottom=.3;frame.fields=17|64;
+      const auto font=(fs::path(PE_SOURCE_DIR)/"app/assets/frame_fonts/sans.ttf").string();std::strcpy(frame.border.font_path,font.c_str());
+      std::strcpy(frame.border.text,"My photograph");
+      const auto logo=(fs::path(PE_SOURCE_DIR)/"app/assets/frame_marks/hasselblad-h-2.png").string();std::strcpy(frame.logo_path,logo.c_str());
+      pe_frame_adjustments a{};a.enabled=1;a.info_align=2;a.caption_align=1;
+      const double positions[]{0,0,.45,1,1,.3,1,.35,.18,.25,.5,.85,.13};std::copy_n(positions,13,a.positions);
+      const auto accent=(fs::path(PE_SOURCE_DIR)/"app/assets/frame_marks/sony-gm-2.png").string();std::strcpy(a.accent_path,accent.c_str());
+      pe_image* raw=nullptr;ok(pe_add_frame_advanced(source.get(),&frame,&a,&raw));Image expected(raw,pe_image_free);
+      const auto expected_path=dir/"advanced-full.png";ok(pe_encode(expected.get(),expected_path.c_str(),PE_PNG,95,1));
+      pe_params params;pe_default_params(&params);pe_effects effects;pe_default_effects(&effects);pe_look look{};
+      pe_decode_options options;pe_default_decode_options(&options);
+      const auto output=dir/"advanced-strip.png";
+      ok(pe_process_file_advanced(input.c_str(),output.c_str(),&options,&params,&effects,nullptr,1,&frame,&look,&a,PE_PNG,95,1,0));
+      expect(pixels(decode(output))==pixels(decode(expected_path)),"Advanced strip and full output differ");
+      const auto before=pixels(expected);a.positions[0]=1;ok(pe_add_frame_advanced(source.get(),&frame,&a,&raw));Image moved(raw,pe_image_free);
+      expect(before!=pixels(moved),"Primary artwork did not move");
+      a.positions[0]=std::numeric_limits<double>::quiet_NaN();expect(pe_add_frame_advanced(source.get(),&frame,&a,&raw)==PE_INVALID_ARGUMENT && !raw);
+    }},
     {"HEIF grid memory plan bounds codec pixels without ignoring compressed tiles", [] {
       constexpr uint64_t MiB=1024ULL*1024;
       expect(!pe::heif_grid(1024,1024) && pe::heif_grid(1025,1) && pe::heif_grid(1,1025));

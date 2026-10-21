@@ -52,7 +52,7 @@ std::unique_ptr<pe_image> resize(const pe_image& src, uint32_t edge) {
   uint32_t w = std::max(1U, uint32_t(std::lround(src.info.width * scale)));
   uint32_t h = std::max(1U, uint32_t(std::lround(src.info.height * scale)));
   auto out = image(w, h);
-  out->info = src.info; out->info.width = w; out->info.height = h;
+  out->info = src.info; out->lens = src.lens; out->info.width = w; out->info.height = h;
   // Exact area resampling in premultiplied linear light avoids transparent halos.
   for (uint32_t y = 0; y < h; ++y) {
     double y0 = double(y) * src.info.height / h, y1 = double(y + 1) * src.info.height / h;

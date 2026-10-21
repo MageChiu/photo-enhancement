@@ -16,6 +16,8 @@ void main() {
     expect(sizeOf<NativeEffects>(), 304);
     expect(sizeOf<NativeBorder>(), 1560);
     expect(sizeOf<NativeFrame>(), 2600);
+    expect(sizeOf<NativeFrameAdjustments>(), 1144);
+    expect(sizeOf<NativeLensInfo>(), 384);
     expect(sizeOf<NativeLook>(), 40);
     expect(sizeOf<NativeLookAnalysis>(), 32);
     expect(sizeOf<NativeInfo>(), 360);

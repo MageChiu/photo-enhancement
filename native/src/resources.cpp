@@ -60,7 +60,7 @@ std::unique_ptr<pe_image> DiskImage::strip(uint32_t y, uint32_t rows) const {
   const uint32_t width = transpose ? info.height : info.width, height = transpose ? info.width : info.height;
   require(y < height && rows <= height - y, "Invalid disk strip");
   auto out = image(width, rows);
-  out->info = info; out->info.width = width; out->info.height = rows;
+  out->info = info; out->lens = metadata.lens; out->info.width = width; out->info.height = rows;
   // A transposed strip maps to a narrow rectangle in source coordinates.
   uint32_t sx0 = 0, sx1 = info.width, sy0 = y, sy1 = y + rows;
   switch (metadata.orientation) {
