@@ -1,4 +1,21 @@
 import 'dart:convert';
+import 'frame_marks.dart';
+
+const defaultFramePositions = <double>[
+  .14,
+  .5,
+  .6,
+  .36,
+  .5,
+  .4,
+  1,
+  .38,
+  .20,
+  .26,
+  1,
+  .80,
+  .13
+];
 
 const controlNames = <String>[
   'exposure',
@@ -90,7 +107,18 @@ class EditRecipe {
     this.frameFields = 31,
     this.frameBrand = 0,
     this.logoPath = '',
-  })  : values = List.unmodifiable(values ?? List<double>.filled(10, 0)),
+    this.frameMark = '',
+    this.frameAccent = '',
+    this.markTone = 0,
+    this.frameFont = 'sans',
+    this.frameAdvanced = false,
+    List<double>? framePositions,
+    this.frameInfoAlign = 2,
+    this.frameCaptionAlign = 2,
+    this.accentPath = '',
+  })  : framePositions =
+            List.unmodifiable(framePositions ?? defaultFramePositions),
+        values = List.unmodifiable(values ?? List<double>.filled(10, 0)),
         effects = List.unmodifiable(effects ?? defaultEffects);
 
   final List<double> values;
@@ -107,6 +135,11 @@ class EditRecipe {
   final double strength, borderWidth, borderBottom;
   final int borderColor;
   final String caption, fontPath, logoPath;
+  final String frameMark, frameAccent, frameFont, accentPath;
+  final bool frameAdvanced;
+  final List<double> framePositions;
+  final int frameInfoAlign, frameCaptionAlign;
+  final int markTone;
   final int frameLayout, frameFields, frameBrand, lookKind;
   final bool lookAdaptive;
   final double lookAdaptation, lookTexture, lookVignette, lookGrain;
@@ -133,6 +166,15 @@ class EditRecipe {
     int? frameFields,
     int? frameBrand,
     String? logoPath,
+    String? frameMark,
+    String? frameAccent,
+    int? markTone,
+    String? frameFont,
+    bool? frameAdvanced,
+    List<double>? framePositions,
+    int? frameInfoAlign,
+    int? frameCaptionAlign,
+    String? accentPath,
   }) =>
       EditRecipe(
         values: values ?? this.values,
@@ -155,6 +197,15 @@ class EditRecipe {
         frameFields: frameFields ?? this.frameFields,
         frameBrand: frameBrand ?? this.frameBrand,
         logoPath: logoPath ?? this.logoPath,
+        frameMark: frameMark ?? this.frameMark,
+        frameAccent: frameAccent ?? this.frameAccent,
+        markTone: markTone ?? this.markTone,
+        frameFont: frameFont ?? this.frameFont,
+        frameAdvanced: frameAdvanced ?? this.frameAdvanced,
+        framePositions: framePositions ?? this.framePositions,
+        frameInfoAlign: frameInfoAlign ?? this.frameInfoAlign,
+        frameCaptionAlign: frameCaptionAlign ?? this.frameCaptionAlign,
+        accentPath: accentPath ?? this.accentPath,
       );
 
   EditRecipe withFrame(EditRecipe frame) => copyWith(
@@ -166,7 +217,16 @@ class EditRecipe {
       frameLayout: frame.frameLayout,
       frameFields: frame.frameFields,
       frameBrand: frame.frameBrand,
-      logoPath: frame.logoPath);
+      logoPath: frame.logoPath,
+      frameMark: frame.frameMark,
+      frameAccent: frame.frameAccent,
+      markTone: frame.markTone,
+      frameFont: frame.frameFont,
+      frameAdvanced: frame.frameAdvanced,
+      framePositions: frame.framePositions,
+      frameInfoAlign: frame.frameInfoAlign,
+      frameCaptionAlign: frame.frameCaptionAlign,
+      accentPath: frame.accentPath);
 
   EditRecipe control(int index, double value) {
     final updated = List<double>.of(values)..[index] = value;
@@ -197,7 +257,16 @@ class EditRecipe {
           'layout': frameLayout,
           'fields': frameFields,
           'brand': frameBrand,
-          'logoPath': logoPath
+          'logoPath': logoPath,
+          'mark': frameMark,
+          'accent': frameAccent,
+          'markTone': markTone,
+          'font': frameFont,
+          'advanced': frameAdvanced,
+          'positions': framePositions,
+          'infoAlign': frameInfoAlign,
+          'captionAlign': frameCaptionAlign,
+          'accentPath': accentPath
         },
       };
 
@@ -238,6 +307,14 @@ class EditRecipe {
       return value;
     }
 
+    String choice(Object? value, List<String> choices, String fallback) {
+      if (value == null) return fallback;
+      if (value is! String || !choices.contains(value)) {
+        throw const FormatException('不支持的边框素材');
+      }
+      return value;
+    }
+
     final path = string(json['lutPath'], 4096);
     final name = string(json['lutName'], 256);
     final effects = json['effects'];
@@ -264,6 +341,25 @@ class EditRecipe {
         (look['adaptive'] != null && look['adaptive'] is! bool)) {
       throw const FormatException('风格选项无效');
     }
+    final positions = border['positions'];
+    if ((border['advanced'] != null && border['advanced'] is! bool) ||
+        (positions != null && (positions is! List || positions.length != 13))) {
+      throw const FormatException('高级排版参数无效');
+    }
+    final parsedPositions = <double>[];
+    for (var i = 0; i < 13; ++i) {
+      final low = i == 2 || i == 5 || i == 8 || i == 9 || i == 12 ? .05 : 0.0;
+      final high = i == 8 || i == 12
+          ? .4
+          : i == 9
+              ? .5
+              : 1.0;
+      parsedPositions.add(number(
+          positions == null ? null : (positions as List)[i],
+          low,
+          high,
+          defaultFramePositions[i]));
+    }
     return EditRecipe(
       effects: parsedEffects,
       values: [
@@ -289,6 +385,16 @@ class EditRecipe {
           string(border['caption'], 512).isEmpty ? 31 : 64),
       frameBrand: option(border['brand'], 4, 0),
       logoPath: string(border['logoPath'], 1024),
+      accentPath: string(border['accentPath'], 1024),
+      frameAdvanced: border['advanced'] as bool? ?? false,
+      framePositions: parsedPositions,
+      frameInfoAlign: option(border['infoAlign'], 2, 2),
+      frameCaptionAlign: option(border['captionAlign'], 2, 2),
+      frameMark: choice(border['mark'], frameMarks.keys.toList(), ''),
+      frameAccent: choice(border['accent'], frameAccents.keys.toList(), ''),
+      markTone: option(border['markTone'], 3, 0),
+      frameFont:
+          choice(border['font'], ['sans', 'mono', 'serif', 'custom'], 'custom'),
     );
   }
 

@@ -126,6 +126,19 @@ pe_status pe_add_frame(const pe_image* img,const pe_frame* frame,pe_image** out)
     return pe::add_border(*img,frame->border,frame,logo.get());
   });
 }
+pe_status pe_read_lens_info(const char* path,uint64_t limit,pe_lens_info* out) {
+  if(out)*out={};
+  return guard([&]{pe::require(path&&out&&limit,"Missing lens metadata arguments");*out=pe::probe_image(path,limit).metadata.lens;});
+}
+pe_status pe_add_frame_advanced(const pe_image* img,const pe_frame* frame,const pe_frame_adjustments* a,pe_image** out) {
+  return output(out,[&]{
+    pe::require(img&&frame&&a,"Missing advanced frame arguments");pe::validate_frame(*frame);pe::validate_frame_adjustments(*a);
+    auto logo=pe::frame_logo(*frame);pe_frame other{};std::memcpy(other.logo_path,a->accent_path,sizeof(other.logo_path));
+    auto accent=pe::frame_logo(other);
+    if(!a->enabled)logo=pe::combined_frame_logo(std::move(logo),accent.get());
+    return pe::add_border(*img,frame->border,frame,logo.get(),a,accent.get());
+  });
+}
 pe_status pe_analyze_look(const pe_image* image,pe_look_analysis* analysis){
   if(analysis)*analysis={};
   return guard([&]{pe::require(image&&analysis,"Missing look analysis arguments");*analysis=pe::analyze_look(*image);});
@@ -147,6 +160,18 @@ pe_status pe_process_file_look(const char* source,const char* destination,const 
     pe::require(format==PE_JPEG||format==PE_PNG||format==PE_HEIF,"Unsupported output format",PE_UNSUPPORTED);
     pe::validate_frame(*frame);pe::validate_look(*look);
     pe::process_file(source,destination,*options,*params,*effects,lut_path,strength,frame->border,format,quality,metadata!=0,budget,frame,look);
+  });
+}
+pe_status pe_process_file_advanced(const char* source,const char* destination,const pe_decode_options* options,
+    const pe_params* params,const pe_effects* effects,const char* lut_path,double strength,
+    const pe_frame* frame,const pe_look* look,const pe_frame_adjustments* a,pe_format format,uint32_t quality,uint32_t metadata,uint64_t budget){
+  return guard([&]{
+    pe::require(source&&destination&&options&&params&&effects&&frame&&look&&a,"Missing advanced export arguments");
+    pe::require(options->max_pixels&&options->max_pixels<=pe::pixel_limit&&options->max_file_bytes,"Invalid decode limits");
+    pe::require(quality>=1&&quality<=100,"Quality must be between 1 and 100");
+    pe::require(format==PE_JPEG||format==PE_PNG||format==PE_HEIF,"Unsupported output format",PE_UNSUPPORTED);
+    pe::validate_frame(*frame);pe::validate_look(*look);pe::validate_frame_adjustments(*a);
+    pe::process_file(source,destination,*options,*params,*effects,lut_path,strength,frame->border,format,quality,metadata!=0,budget,frame,look,a);
   });
 }
 pe_status pe_process_file_frame(const char* source,const char* destination,const pe_decode_options* options,

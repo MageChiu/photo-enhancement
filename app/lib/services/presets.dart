@@ -104,7 +104,11 @@ class PresetStore {
     // its LUT data; fonts are chosen locally on the destination device.
     var recipe =
         EditRecipe.fromJson(Map<String, dynamic>.from(decoded['recipe'] as Map))
-            .copyWith(clearLut: true, fontPath: '', logoPath: '');
+            .copyWith(
+                clearLut: true, fontPath: '', logoPath: '', accentPath: '');
+    if (recipe.frameFont == 'custom') {
+      recipe = recipe.copyWith(frameFont: 'sans');
+    }
     if (cube is String) {
       final hash = sha256.convert(utf8.encode(cube));
       // The filename is an internal cache key, never an imported filesystem path.
@@ -132,8 +136,8 @@ class PresetStore {
       throw const FormatException('预设名称须为 1–100 个字符');
     }
     if (frameOnly) recipe = EditRecipe().withFrame(recipe);
-    final portable =
-        recipe.copyWith(clearLut: true, fontPath: '', logoPath: '');
+    final portable = recipe.copyWith(
+        clearLut: true, fontPath: '', logoPath: '', accentPath: '');
     String? cube;
     if (recipe.lutPath != null) {
       final file = File(recipe.lutPath!);

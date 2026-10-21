@@ -4,6 +4,7 @@ import 'dart:io';
 import 'dart:isolate';
 import 'package:ffi/ffi.dart';
 import '../models/edit.dart';
+import '../services/frame_resources.dart';
 import 'bindings.dart';
 
 class ImageWorker {
@@ -99,6 +100,7 @@ void _entry(List<Object?> startup) {
   reply.send(receive.sendPort);
   Pointer<NativeImage> source = nullptr;
   String? sourcePath;
+  Map<String, String> lens = {};
   receive.listen((dynamic raw) {
     final message = Map<String, dynamic>.from(raw as Map);
     if (message['operation'] == 'close') {
@@ -120,10 +122,17 @@ void _entry(List<Object?> startup) {
         return;
       }
       final path = message['path'] as String;
-      final recipe = EditRecipe.fromJson(
+      var recipe = EditRecipe.fromJson(
           Map<String, dynamic>.from(message['recipe'] as Map));
+      final assets =
+          Map<String, String>.from(message['frameAssets'] as Map? ?? {});
       final exporting = message['operation'] == 'export';
       if (exporting) {
+        recipe = resolveFrameResources(
+            recipe, message['make'] as String? ?? '', assets,
+            cameraModel: (message['model'] as String?) ?? '',
+            lensMake: (message['lensMake'] as String?) ?? '',
+            lensModel: (message['lensModel'] as String?) ?? '');
         using((arena) {
           final options = arena<DecodeOptions>();
           native.defaultOptions(options);
@@ -143,7 +152,7 @@ void _entry(List<Object?> startup) {
           _fillFrame(border.ref, recipe);
           final look = arena<NativeLook>();
           _fillLook(look.ref, recipe);
-          native.check(native.processFileLook(
+          native.check(native.processFileAdvanced(
               path.toNativeUtf8(allocator: arena),
               (message['destination'] as String).toNativeUtf8(allocator: arena),
               options,
@@ -153,6 +162,7 @@ void _entry(List<Object?> startup) {
               recipe.strength,
               border,
               look,
+              _adjustments(arena, recipe),
               message['format'] as int,
               message['quality'] as int,
               message['metadata'] == true ? 1 : 0,
@@ -167,9 +177,17 @@ void _entry(List<Object?> startup) {
         source = nullptr;
         sourcePath = null;
         source = native.openImage(path, 1600);
+        lens = native.lensInfo(path);
         sourcePath = path;
       }
       final input = source;
+      if (message['operation'] == 'inspect') {
+        reply.send({
+          'id': id,
+          'info': {...native.imageInfo(input), ...lens}
+        });
+        return;
+      }
       if (message['operation'] == 'thumbnails') {
         final results = <Map<String, dynamic>>[];
         using((arena) {
@@ -206,10 +224,15 @@ void _entry(List<Object?> startup) {
       Pointer<NativeImage> rendered = nullptr;
       Pointer<NativeImage> originalFrame = nullptr;
       try {
+        recipe = resolveFrameResources(
+            recipe, native.imageInfo(input)['make'] as String? ?? '', assets,
+            cameraModel: native.imageInfo(input)['model'] as String? ?? '',
+            lensMake: lens['lensMake'] ?? '',
+            lensModel: lens['lensModel'] ?? '');
         rendered = _render(native, input, recipe);
         final info = native.imageInfo(rendered);
         final length = (info['width'] as int) * (info['height'] as int) * 4;
-        final original = native.imageInfo(input);
+        final original = {...native.imageInfo(input), ...lens};
         originalFrame = _frame(native, input, recipe);
         reply.send({
           'id': id,
@@ -323,9 +346,22 @@ Pointer<NativeImage> _frame(
       final frame = arena<NativeFrame>();
       _fillFrame(frame.ref, recipe);
       final out = arena<Pointer<NativeImage>>();
-      native.check(native.addFrame(image, frame, out));
+      native.check(native.addFrameAdvanced(
+          image, frame, _adjustments(arena, recipe), out));
       return out.value;
     });
+
+Pointer<NativeFrameAdjustments> _adjustments(Arena arena, EditRecipe recipe) {
+  final a = arena<NativeFrameAdjustments>();
+  a.ref.enabled = recipe.frameAdvanced ? 1 : 0;
+  a.ref.infoAlign = recipe.frameInfoAlign;
+  a.ref.captionAlign = recipe.frameCaptionAlign;
+  for (var i = 0; i < 13; ++i) {
+    a.ref.positions[i] = recipe.framePositions[i];
+  }
+  writeText(a.ref.accentPath, 1024, recipe.accentPath);
+  return a;
+}
 
 void _fillFrame(NativeFrame frame, EditRecipe recipe) {
   final b = frame.border;

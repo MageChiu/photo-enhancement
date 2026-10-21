@@ -15,6 +15,7 @@
 
 struct pe_image {
   pe_image_info info{};
+  pe_lens_info lens{};
   std::vector<uint16_t> pixels;
 };
 struct pe_lut {
@@ -58,6 +59,7 @@ inline std::unique_ptr<pe_image> image(uint32_t w, uint32_t h) {
 std::unique_ptr<pe_image> decode(const std::string&, const pe_decode_options&);
 struct Metadata {
   pe_image_info info{};
+  pe_lens_info lens{};
   uint16_t orientation = 1;
 };
 struct ImageProbe {
@@ -79,15 +81,19 @@ struct RowWriter {
   virtual void rows(const pe_image&, uint32_t begin, uint32_t count) = 0;
   virtual void finish() = 0;
 };
-std::unique_ptr<RowWriter> row_writer(FILE*, const pe_image_info&, pe_format, uint32_t quality, bool metadata);
+std::unique_ptr<RowWriter> row_writer(FILE*, const pe_image_info&, pe_format, uint32_t quality, bool metadata, const pe_lens_info* lens = nullptr);
 void validate_frame(const pe_frame&);
+void validate_frame_adjustments(const pe_frame_adjustments&);
+std::unique_ptr<pe_image> combined_frame_logo(std::unique_ptr<pe_image>,const pe_image*);
 std::unique_ptr<pe_image> frame_logo(const pe_frame&);
 std::unique_ptr<pe_image> border_strip(const pe_image_info&, const pe_border&, uint32_t y, uint32_t rows,
-    const pe_frame* frame = nullptr, const pe_image* logo = nullptr);
+    const pe_frame* frame = nullptr, const pe_image* logo = nullptr,
+    const pe_frame_adjustments* adjustments = nullptr, const pe_image* accent = nullptr);
 void process_file(const std::string&, const std::string&, const pe_decode_options&,
     const pe_params&, const pe_effects&, const char* lut_path, double strength,
     const pe_border&, pe_format, uint32_t quality, bool metadata, uint64_t budget,
-    const pe_frame* frame = nullptr, const pe_look* look = nullptr);
+    const pe_frame* frame = nullptr, const pe_look* look = nullptr,
+    const pe_frame_adjustments* adjustments = nullptr);
 void validate_look(const pe_look&);
 pe_look_analysis analyze_look(const pe_image&);
 pe_look_analysis analyze_look(const DiskImage&);
@@ -99,12 +105,13 @@ std::unique_ptr<pe_image> apply_params(const pe_image&, const pe_params&);
 std::unique_ptr<pe_image> apply_effects(const pe_image&, const pe_effects&);
 std::unique_ptr<pe_lut> load_lut(const std::string&);
 std::unique_ptr<pe_image> apply_lut(const pe_image&, const pe_lut&, double);
-std::unique_ptr<pe_image> add_border(const pe_image&, const pe_border&, const pe_frame* frame = nullptr, const pe_image* logo = nullptr);
+std::unique_ptr<pe_image> add_border(const pe_image&, const pe_border&, const pe_frame* frame = nullptr, const pe_image* logo = nullptr,
+    const pe_frame_adjustments* adjustments = nullptr, const pe_image* accent = nullptr);
 void encode(const pe_image&, const std::string&, pe_format, uint32_t, bool);
 std::vector<uint8_t> rgba8(const pe_image&, bool flatten = false);
 void from_display(pe_image&, const uint16_t* rgba, const std::vector<uint8_t>& icc);
 Metadata read_exif(const uint8_t* data, size_t size);
-std::vector<uint8_t> write_exif(const pe_image_info&);
+std::vector<uint8_t> write_exif(const pe_image_info&,const pe_lens_info* lens = nullptr);
 void orient(pe_image&, uint16_t);
 std::string caption(const pe_image_info&);
 }

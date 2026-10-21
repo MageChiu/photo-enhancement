@@ -35,7 +35,7 @@ std::unique_ptr<pe_image> render(std::unique_ptr<pe_image> source,const pe_param
 void process_file(const std::string& path,const std::string& destination,const pe_decode_options& input,
     const pe_params& params,const pe_effects& effects,const char* lut_path,double strength,
     const pe_border& border,pe_format format,uint32_t quality,bool metadata,uint64_t requested,
-    const pe_frame* style,const pe_look* look){
+    const pe_frame* style,const pe_look* look,const pe_frame_adjustments* adjustments){
   if(look)validate_look(*look);
   const uint64_t automatic=memory_budget();
   const uint64_t budget=requested?std::min(requested,automatic):automatic;
@@ -43,22 +43,27 @@ void process_file(const std::string& path,const std::string& destination,const p
   require(!std::filesystem::exists(destination,destination_error) && !destination_error,
       "Destination already exists or cannot be inspected: "+destination,PE_IO_ERROR);
   if(style)validate_frame(*style);
+  if(adjustments)validate_frame_adjustments(*adjustments);
   auto logo=style?frame_logo(*style):nullptr;
+  pe_frame accent_frame{};
+  if(adjustments)std::memcpy(accent_frame.logo_path,adjustments->accent_path,sizeof(accent_frame.logo_path));
+  auto accent=adjustments?frame_logo(accent_frame):nullptr;
+  if(adjustments && !adjustments->enabled)logo=combined_frame_logo(std::move(logo),accent.get());
   auto probe=probe_image(path,input.max_file_bytes);
   checked_pixels(probe.metadata.info.width,probe.metadata.info.height,input.max_pixels);
   auto info=probe.metadata.info;
   if(probe.metadata.orientation>=5)std::swap(info.width,info.height);
   // Validate recipes before allocating a full image or creating an output.
-  {auto tiny=image(1,1);apply_params(*tiny,params);apply_effects(*tiny,effects);border_strip(info,border,0,1,style,logo.get());}
+  {auto tiny=image(1,1);apply_params(*tiny,params);apply_effects(*tiny,effects);border_strip(info,border,0,1,style,logo.get(),adjustments,accent.get());}
   require(std::isfinite(strength)&&strength>=0&&strength<=1,"LUT strength must be in [0,1]");
   std::unique_ptr<pe_lut> lut;
   if(lut_path && *lut_path)lut=load_lut(lut_path);
   require(!look || !look->kind || lut,"A styled look requires its LUT");
-  const uint64_t lut_bytes=(lut?lut->values.size()*sizeof(std::array<double,3>):0)+(logo?logo->pixels.size()*sizeof(uint16_t):0);
+  const uint64_t lut_bytes=(lut?lut->values.size()*sizeof(std::array<double,3>):0)+(logo?logo->pixels.size()*sizeof(uint16_t):0)+(accent?accent->pixels.size()*sizeof(uint16_t):0);
   const uint32_t edge=std::min(info.width,info.height),pad=uint32_t(std::lround(edge*border.width)),bottom=uint32_t(std::lround(edge*border.bottom));
   const uint32_t output_width=info.width+pad*2,output_height=info.height+pad*2+bottom;
   checked_pixels(output_width,output_height);
-  if(bottom)border_strip(info,border,pad+info.height,1,style,logo.get());
+  if(bottom)border_strip(info,border,pad+info.height,1,style,logo.get(),adjustments,accent.get());
 
   if(probe.jpeg) {
     // JPEG input goes through bounded strips regardless of the camera's MP.
@@ -82,10 +87,10 @@ void process_file(const std::string& path,const std::string& destination,const p
     const auto analysis=look&&look->kind?analyze_look(*disk):pe_look_analysis{};
     Output output(destination);
     auto output_info=info;output_info.width=output_width;output_info.height=output_height;
-    auto writer=row_writer(output.file,output_info,format,quality,metadata);
+    auto writer=row_writer(output.file,output_info,format,quality,metadata,&probe.metadata.lens);
     for(uint32_t y=0;y<output_height;y+=strip_rows){
       const uint32_t rows=std::min(strip_rows,output_height-y);
-      auto frame=border_strip(info,border,y,rows,style,logo.get());
+      auto frame=border_strip(info,border,y,rows,style,logo.get(),adjustments,accent.get());
       const uint32_t first=std::max(y,pad),last=std::min(y+rows,pad+info.height);
       if(first<last){
         const uint32_t start=first-pad,finish=last-pad;
@@ -132,7 +137,7 @@ void process_file(const std::string& path,const std::string& destination,const p
   const auto analysis=look&&look->kind?analyze_look(*source):pe_look_analysis{};
   const uint32_t width=source->info.width,height=source->info.height;
   source=render(std::move(source),params,effects,lut.get(),strength,look,analysis,width,height,0);
-  source=add_border(*source,border,style,logo.get());
+  source=add_border(*source,border,style,logo.get(),adjustments,accent.get());
   encode(*source,destination,format,quality,metadata);
 }
 }
