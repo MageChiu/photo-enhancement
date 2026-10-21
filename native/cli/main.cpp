@@ -41,24 +41,29 @@ int main(int argc, char** argv) {
       else throw std::runtime_error("Unknown option: " + key);
     }
     auto start = std::chrono::steady_clock::now();
-    pe_image* handle = nullptr; check(pe_decode(argv[1], &options, &handle)); Image img(handle, pe_image_free);
-    check(pe_apply_params(img.get(), &params, &handle)); img.reset(handle);
-    if (!lut_path.empty()) {
-      pe_lut* raw = nullptr; check(pe_lut_load(lut_path.c_str(), &raw));
-      std::unique_ptr<pe_lut, decltype(&pe_lut_free)> lut(raw, pe_lut_free);
-      check(pe_apply_lut(img.get(), lut.get(), strength, &handle)); img.reset(handle);
-    }
-    check(pe_add_border(img.get(), &border, &handle)); img.reset(handle);
     std::string output = argv[2], extension = output.substr(output.find_last_of('.') + 1);
     pe_format format;
     if (extension == "png") format = PE_PNG;
     else if (extension == "jpg" || extension == "jpeg") format = PE_JPEG;
     else if (extension == "heic" || extension == "heif") format = PE_HEIF;
     else throw std::runtime_error("Output extension must be jpg, jpeg, png, heic or heif");
-    check(pe_encode(img.get(), output.c_str(), format, quality, metadata));
-    pe_image_info info; check(pe_image_get_info(img.get(), &info));
+    if (!options.max_edge) {
+      pe_effects effects; pe_default_effects(&effects);
+      check(pe_process_file(argv[1], output.c_str(), &options, &params, &effects,
+          lut_path.c_str(), strength, &border, format, quality, metadata, 0));
+    } else {
+      pe_image* handle = nullptr; check(pe_decode(argv[1], &options, &handle)); Image img(handle, pe_image_free);
+      check(pe_apply_params(img.get(), &params, &handle)); img.reset(handle);
+      if (!lut_path.empty()) {
+        pe_lut* raw = nullptr; check(pe_lut_load(lut_path.c_str(), &raw));
+        std::unique_ptr<pe_lut, decltype(&pe_lut_free)> lut(raw, pe_lut_free);
+        check(pe_apply_lut(img.get(), lut.get(), strength, &handle)); img.reset(handle);
+      }
+      check(pe_add_border(img.get(), &border, &handle)); img.reset(handle);
+      check(pe_encode(img.get(), output.c_str(), format, quality, metadata));
+    }
     double ms = std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - start).count();
-    std::cout << info.width << "x" << info.height << " -> " << output << " (" << ms << " ms)\n";
+    std::cout << "Exported " << output << " (" << ms << " ms)\n";
     return 0;
   } catch (const std::exception& e) { std::cerr << "Error: " << e.what() << '\n'; return 1; }
 }

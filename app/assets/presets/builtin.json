@@ -1,20 +1,106 @@
 [
   {
+    "name": "寒峻 · 试用",
+    "description": "低调明暗、冷灰绿与暗红，保留材质；支持保守自适应",
+    "group": "冷峻纪实",
+    "lut": "hanjun.cube",
+    "recipe": {
+      "version": 1,
+      "params": {},
+      "strength": 0.85,
+      "look": {
+        "kind": 1,
+        "adaptive": true,
+        "adaptation": 0.7,
+        "texture": 0.35,
+        "vignette": 0.25,
+        "grain": 0
+      }
+    },
+    "id": "hanjun"
+  },
+  {
+    "name": "现场",
+    "description": "中性色彩、清晰层次，适合日常纪实与人物",
+    "group": "纪实光影",
+    "lut": "on_scene.cube",
+    "recipe": {
+      "version": 1,
+      "params": {},
+      "strength": 0.85
+    },
+    "id": "on_scene"
+  },
+  {
+    "name": "烈日",
+    "description": "金橙暖光、浓厚暗部，适合夕阳与逆光街头",
+    "group": "纪实光影",
+    "lut": "hard_sun.cube",
+    "recipe": {
+      "version": 1,
+      "params": {},
+      "strength": 0.75
+    },
+    "id": "hard_sun"
+  },
+  {
+    "name": "蓝暮",
+    "description": "冷色暗部与暖色亮部，适合城市晨昏与灯光",
+    "group": "纪实光影",
+    "lut": "blue_hour.cube",
+    "recipe": {
+      "version": 1,
+      "params": {},
+      "strength": 0.8
+    },
+    "id": "blue_hour"
+  },
+  {
+    "name": "色叙",
+    "description": "红青色彩突出、杂色收敛，适合环境人像与街拍",
+    "group": "纪实光影",
+    "lut": "colour_story.cube",
+    "recipe": {
+      "version": 1,
+      "params": {},
+      "strength": 0.8
+    },
+    "id": "colour_story"
+  },
+  {
     "name": "纪实 · 日常",
-    "description": "克制对比、轻微去饱和，保留现场感",
+    "description": "轻微去饱和，保留现场感",
+    "group": "基础纪实",
     "lut": "documentary.cube",
-    "recipe": {"version": 1, "params": {"contrast": 0.06, "highlights": -0.12, "shadows": 0.08, "saturation": -0.06}, "strength": 0.7}
+    "recipe": {
+      "version": 1,
+      "params": {},
+      "strength": 0.7
+    },
+    "id": "documentary"
   },
   {
     "name": "冷影 · 街头",
-    "description": "偏冷阴影与柔和高光，适合城市光线",
+    "description": "偏冷阴影与柔和色彩",
+    "group": "基础纪实",
     "lut": "cool_street.cube",
-    "recipe": {"version": 1, "params": {"contrast": 0.08, "highlights": -0.16, "shadows": 0.1, "vibrance": -0.06}, "strength": 0.7}
+    "recipe": {
+      "version": 1,
+      "params": {},
+      "strength": 0.7
+    },
+    "id": "cool_street"
   },
   {
     "name": "暖调 · 人文",
-    "description": "温暖中间调、自然肤色，适合人物与生活",
+    "description": "温暖中间调，适合人物与生活",
+    "group": "基础纪实",
     "lut": "warm_story.cube",
-    "recipe": {"version": 1, "params": {"contrast": 0.03, "highlights": -0.08, "temperature": 0.08, "saturation": -0.04}, "strength": 0.65}
+    "recipe": {
+      "version": 1,
+      "params": {},
+      "strength": 0.65
+    },
+    "id": "warm_story"
   }
 ]

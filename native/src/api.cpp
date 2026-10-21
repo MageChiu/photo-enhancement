@@ -1,4 +1,7 @@
 #include "internal.hpp"
+#ifdef PE_HAVE_HEIF
+#include <libheif/heif.h>
+#endif
 #include <cstdio>
 #include <cstring>
 
@@ -20,22 +23,38 @@ template<class F> pe_status output(pe_image** out, F&& f) {
 
 extern "C" {
 uint32_t pe_abi_version() { return 1; }
+uint64_t pe_memory_budget(uint32_t preview) { return pe::memory_budget(preview != 0); }
 const char* pe_last_error() { return last_error.data(); }
 const char* pe_capabilities() {
-  return "jpeg,png,raw,icc,exif,lut,border"
+#define PE_BASE_CAPABILITIES "jpeg,png,raw,icc,exif,lut,border,frame,hsl,curve,split-tone,sharpen,denoise"
 #ifdef PE_HAVE_WEBP
-    ",webp"
+#define PE_CODEC_CAPABILITIES PE_BASE_CAPABILITIES ",webp"
+#else
+#define PE_CODEC_CAPABILITIES PE_BASE_CAPABILITIES
 #endif
 #ifdef PE_HAVE_HEIF
-    ",heif"
+  return heif_have_encoder_for_format(heif_compression_HEVC)
+    ? PE_CODEC_CAPABILITIES ",heif,heif-encode" : PE_CODEC_CAPABILITIES ",heif";
+#else
+  return PE_CODEC_CAPABILITIES;
 #endif
-    ;
+#undef PE_CODEC_CAPABILITIES
+#undef PE_BASE_CAPABILITIES
 }
 void pe_default_decode_options(pe_decode_options* p) {
-  if (p) *p = {1600, 80000000, 512ULL * 1024 * 1024};
+  if (p) *p = {1600, uint32_t(pe::pixel_limit), 512ULL * 1024 * 1024};
 }
 void pe_default_params(pe_params* p) { if (p) *p = {}; }
 void pe_default_border(pe_border* p) { if (p) { *p = {}; p->color = 0xffffff; } }
+void pe_default_effects(pe_effects* p) {
+  if (p) { *p = {}; for (int i = 0; i < 5; ++i) p->curve[i] = i / 4.0; p->radius = 1; }
+}
+pe_status pe_apply_effects(const pe_image* img, const pe_effects* p, pe_image** out) {
+  return output(out, [&] {
+    pe::require(img && p, "Image or effects are null");
+    return pe::apply_effects(*img, *p);
+  });
+}
 pe_status pe_decode(const char* path, const pe_decode_options* options, pe_image** out) {
   return output(out, [&] {
     pe::require(path && options, "Path or options are null");
@@ -89,4 +108,58 @@ pe_status pe_encode(const pe_image* img, const char* path, pe_format format,
 }
 void pe_image_free(pe_image* img) { delete img; }
 void pe_lut_free(pe_lut* lut) { delete lut; }
+pe_status pe_process_file(const char* source,const char* destination,const pe_decode_options* options,
+    const pe_params* params,const pe_effects* effects,const char* lut_path,double strength,
+    const pe_border* border,pe_format format,uint32_t quality,uint32_t metadata,uint64_t budget) {
+  return guard([&]{
+    pe::require(source&&destination&&options&&params&&effects&&border,"Missing export arguments");
+    pe::require(options->max_pixels&&options->max_pixels<=pe::pixel_limit&&options->max_file_bytes,"Invalid decode limits");
+    pe::require(quality>=1&&quality<=100,"Quality must be between 1 and 100");
+    pe::require(format==PE_JPEG||format==PE_PNG||format==PE_HEIF,"Unsupported output format",PE_UNSUPPORTED);
+    pe::process_file(source,destination,*options,*params,*effects,lut_path,strength,*border,format,quality,metadata!=0,budget);
+  });
+}
+pe_status pe_add_frame(const pe_image* img,const pe_frame* frame,pe_image** out) {
+  return output(out,[&]{
+    pe::require(img&&frame,"Missing frame arguments");pe::validate_frame(*frame);
+    auto logo=pe::frame_logo(*frame);
+    return pe::add_border(*img,frame->border,frame,logo.get());
+  });
+}
+pe_status pe_analyze_look(const pe_image* image,pe_look_analysis* analysis){
+  if(analysis)*analysis={};
+  return guard([&]{pe::require(image&&analysis,"Missing look analysis arguments");*analysis=pe::analyze_look(*image);});
+}
+pe_status pe_apply_look(const pe_image* image,const pe_lut* lut,double strength,
+    const pe_look* look,const pe_look_analysis* analysis,uint32_t width,uint32_t height,uint32_t origin,pe_image** out){
+  return output(out,[&]{
+    pe::require(image&&lut&&look&&analysis,"Missing look arguments");
+    return pe::apply_look(*image,*lut,strength,*look,*analysis,width,height,origin);
+  });
+}
+pe_status pe_process_file_look(const char* source,const char* destination,const pe_decode_options* options,
+    const pe_params* params,const pe_effects* effects,const char* lut_path,double strength,
+    const pe_frame* frame,const pe_look* look,pe_format format,uint32_t quality,uint32_t metadata,uint64_t budget){
+  return guard([&]{
+    pe::require(source&&destination&&options&&params&&effects&&frame&&look,"Missing export arguments");
+    pe::require(options->max_pixels&&options->max_pixels<=pe::pixel_limit&&options->max_file_bytes,"Invalid decode limits");
+    pe::require(quality>=1&&quality<=100,"Quality must be between 1 and 100");
+    pe::require(format==PE_JPEG||format==PE_PNG||format==PE_HEIF,"Unsupported output format",PE_UNSUPPORTED);
+    pe::validate_frame(*frame);pe::validate_look(*look);
+    pe::process_file(source,destination,*options,*params,*effects,lut_path,strength,frame->border,format,quality,metadata!=0,budget,frame,look);
+  });
+}
+pe_status pe_process_file_frame(const char* source,const char* destination,const pe_decode_options* options,
+    const pe_params* params,const pe_effects* effects,const char* lut_path,double strength,
+    const pe_frame* frame,pe_format format,uint32_t quality,uint32_t metadata,uint64_t budget) {
+  return guard([&]{
+    pe::require(source&&destination&&options&&params&&effects&&frame,"Missing export arguments");
+    pe::require(options->max_pixels&&options->max_pixels<=pe::pixel_limit&&options->max_file_bytes,"Invalid decode limits");
+    pe::require(quality>=1&&quality<=100,"Quality must be between 1 and 100");
+    pe::require(format==PE_JPEG||format==PE_PNG||format==PE_HEIF,"Unsupported output format",PE_UNSUPPORTED);
+    pe::validate_frame(*frame);
+    pe::process_file(source,destination,*options,*params,*effects,lut_path,strength,frame->border,format,quality,metadata!=0,budget,frame);
+  });
+}
+
 }

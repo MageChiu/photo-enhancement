@@ -2,7 +2,7 @@
 # Generate only platform runners. Never replace the hand-written app sources.
 set -eu
 cd "$(dirname "$0")/.."
-command -v flutter >/dev/null 2>&1 || { echo 'Flutter 3.27.x SDK is required (see README).' >&2; exit 1; }
+command -v flutter >/dev/null 2>&1 || { echo 'Flutter SDK is required (see app/.fvmrc and README).' >&2; exit 1; }
 python3 scripts/generate_luts.py
 template="build/flutter_runner_template"
 if [ ! -d "$template/macos" ]; then

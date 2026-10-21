@@ -1,0 +1,2 @@
+// Force inclusion: Dart looks up C ABI symbols dynamically via process().
+OTHER_LDFLAGS = $(inherited) -lc++ -Wl,-export_dynamic -force_load "$(PROJECT_DIR)/PhotoCore/$(PLATFORM_NAME)/libphoto_core.a"

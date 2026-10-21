@@ -17,7 +17,29 @@ def run(*args):
 
 
 def dependencies(path):
-    return [line.strip().split(" (", 1)[0] for line in run("otool", "-L", str(path)).splitlines()[1:]]
+    ids = set(run("otool", "-D", str(path)).splitlines()[1:])
+    return [line.strip().split(" (", 1)[0] for line in run("otool", "-L", str(path)).splitlines()[1:]
+            if line.strip().split(" (", 1)[0] not in ids]
+
+
+def resolve_dependency(dep, source):
+    if dep.startswith("@loader_path/"):
+        return source.parent / dep.removeprefix("@loader_path/")
+    if dep.startswith("/"):
+        return Path(dep)
+    if dep.startswith("@rpath/"):
+        lines = run("otool", "-l", str(source)).splitlines()
+        for index, line in enumerate(lines):
+            if line.strip() == "cmd LC_RPATH":
+                root = lines[index + 2].strip().split(" (offset", 1)[0].removeprefix("path ")
+                root = root.replace("@loader_path", str(source.parent))
+                candidate = Path(root) / dep.removeprefix("@rpath/")
+                if candidate.is_file():
+                    return candidate
+        candidate = source.parent / dep.removeprefix("@rpath/")
+        if candidate.is_file():
+            return candidate
+    raise RuntimeError(f"Unresolved dependency {dep} in {source}")
 
 
 def bundle(source, destination, copied):
@@ -34,14 +56,7 @@ def bundle(source, destination, copied):
     for dep in dependencies(source):
         if dep.startswith(("/usr/lib/", "/System/Library/")):
             continue
-        if dep.startswith("@loader_path/"):
-            original = source.parent / dep.removeprefix("@loader_path/")
-        elif dep.startswith("/"):
-            original = Path(dep)
-        elif dep == f"@rpath/{source.name}":
-            continue  # library install name itself
-        else:
-            raise RuntimeError(f"Unresolved dependency {dep} in {source}")
+        original = resolve_dependency(dep, source)
         if original.resolve() == source:
             continue
         nested = bundle(original, destination, copied)
