@@ -1,46 +1,39 @@
 # GitHub 构建、验证与发布
 
-工作流：`.github/workflows/release.yml`。覆盖当前已接入的 macOS、Android、iOS、HarmonyOS；项目尚无 Windows/Linux 桌面 Runner，不产出这两端应用。
+工作流：`.github/workflows/release.yml`。当前构建 macOS、Android、iOS 应用。HarmonyOS 暂不参与流水线，保留本地构建脚本；项目尚无 Windows/Linux 桌面 Runner，不产出这两端应用。
 
 ## 触发规则
 
 | 事件 | 行为 |
 | --- | --- |
-| push 到 `dev/dev-v*` 分支 | 完整构建所有平台、运行检查和测试、验证发布包并生成校验和；只上传 Actions artifacts |
+| push 到 `dev/dev-v*` 分支 | 构建并打包所有平台应用、汇总发布包并生成校验和；只上传 Actions artifacts |
 | push 到 `release-*` 分支 | 同上，全部成功后创建预发布 Release；标签为 `<分支名>-build-<run_id>`，固定到此次构建的提交 |
 | push 任意 tag，例如 `v0.1.0`、`release-0.1.0` | 同上，全部成功后以原 tag 创建正式 Release |
 | Actions → Build and release → Run workflow | 在所选 ref 上验证整套流程，只上传 artifacts，不发布 |
 
 `dev/dev-v*` 匹配如 `dev/dev-v0.1.0` 的分支，不匹配 `dev-foo`、`dev/dev-foo` 或更深层级路径；`release-*` 不匹配含 `/` 的分支名。每次发布前应维护 `app/pubspec.yaml` 中的应用版本；tag 名不会自动修改应用版本。工作流读取 `app/.fvmrc` 固定 Flutter 版本，递归检出固定提交的 LibRaw 子模块。
 
-同一 `dev/dev-v*` 分支的新提交取消旧构建；发布构建不会被自动取消。任一平台失败，Release 不会创建。没有鸿蒙 runner 时鸿蒙任务会排队，其余平台仍可独立构建并下载各自产物，但完整流水线和发布必须等待鸿蒙成功，不能以跳过鸿蒙冒充四端交付。
+同一 `dev/dev-v*` 分支的新提交取消旧构建；发布构建不会被自动取消。任一平台失败，Release 不会创建。鸿蒙不再创建排队任务，也不再是发布所需产物。macOS、Android、iOS 三端全部成功后即可汇总和发布。
 
-## 产物与测试
+## 应用产物
 
 | 平台 | 产物 | 检查 |
 | --- | --- | --- |
-| macOS | arm64 / x86_64 独立应用 ZIP | 两种 runner 均运行 CTest、Flutter analyze、Flutter test（设置 `PHOTO_CORE_LIBRARY`，执行 FFI 集成测试）；打包脚本校验 ad-hoc 签名及动态依赖闭包 |
-| Android | arm64-v8a / x86_64 分架构 APK | Gradle 对各 ABI 编译原生内核和固定源码依赖，再构建 Release APK |
+| macOS | arm64 / x86_64 独立应用 ZIP 和 DMG（拖入 Applications） | 两种 runner 均构建原生内核和 Flutter Release 应用；打包脚本校验 ad-hoc 签名及动态依赖闭包，hdiutil 校验 DMG |
+| Android | arm64-v8a / x86_64 分架构 APK | setup-android v4 仅安装 platform-tools（不请求已下线的 tools 包），随后安装固定 SDK/NDK；Gradle 对各 ABI 编译原生内核和固定源码依赖，再构建 Release APK |
 | iOS | arm64 未签名设备 `.app` ZIP、arm64 模拟器 Debug `.app` ZIP | 构建设备 arm64、模拟器 arm64/x86_64 静态库闭包，再构建两种应用；模拟器应用只针对当前 arm64 宿主 |
-| HarmonyOS | arm64-v8a Release HAP（保留上游文件名后缀） | ohos Flutter 构建 HAP、静态分析和 Flutter 测试；FFI 主机集成测试由 macOS 执行 |
 
-所有平台在 dev 和 release 上使用完全相同的构建步骤。打包成功不代表真机或照片画质验收通过。汇总任务会检查所有必需产物、ZIP/APK/HAP 完整性，生成 `build-info.json` 和 `SHA256SUMS`。Actions 中单平台 `package-*` 和完整 `release-bundle` 保留 14 天；Release assets 长期保留。下载后可执行 `sha256sum -c SHA256SUMS` 校验。
+dev 用于验证 release 流水线是否能产出应用。两类分支共用同一套构建、打包、汇总步骤，唯一区别是 dev 不执行最后的 GitHub Release 发布；流水线不运行 CTest、Flutter analyze 或 Flutter test。打包成功不代表真机或照片画质验收通过。汇总任务会检查所有必需产物、ZIP/APK 完整性和 DMG 是否非空（DMG 完整性在 macOS runner 验证），生成 `build-info.json` 和 `SHA256SUMS`。Actions 中单平台 `package-*` 和完整 `release-bundle` 保留 14 天；Release assets 长期保留。下载后可执行 `sha256sum -c SHA256SUMS` 校验。
 
-macOS 沿用 ad-hoc 签名，无 Developer ID 公证。Android 沿用项目当前开发签名，不适合直接用于商店上架；托管 runner 的开发证书可能随构建变化。iOS 设备包未签名，需通过自己的 Apple 签名流程才能安装，未伪装为可安装 IPA。HarmonyOS 签名由 runner 中的 DevEco/宿主配置决定。
+macOS 沿用 ad-hoc 签名，无 Developer ID 公证。Android 沿用项目当前开发签名，不适合直接用于商店上架；托管 runner 的开发证书可能随构建变化。iOS 设备包未签名，需通过自己的 Apple 签名流程才能安装，未伪装为可安装 IPA。
 
-## 首次启用：鸿蒙 runner
+## 鸿蒙与 Windows
 
-GitHub 托管 runner 不提供项目需要的 ohos Flutter / DevEco 配套环境。需在仓库 Settings → Actions → Runners 注册专用自托管 runner，添加 `ohos` 标签（工作流使用 `[self-hosted, ohos]`）。runner 需支持 Bash、Python 3，以及当前版本 Actions 所需的 Node runtime；建议使用 macOS 或 Linux。
+鸿蒙暂时退出 CI，不需要自托管 runner，不会阻塞其他平台。`scripts/build_ohos.sh` 和 `scripts/collect_ohos_artifacts.py` 保留，后续接入时再配置匹配的 ohos Flutter / DevEco 工具链并恢复任务。
 
-在 runner 服务运行环境中提供以下工具和变量（终端交互 shell 中可见不代表服务可见）：
+Windows 当前不能直接生成可用应用：缺少 `app/windows` Runner、原生 DLL 构建/打包和 Dart FFI 自动加载；内核的 `unistd.h`、`pread`、`pwrite`、`mkstemp`、`sysconf` 等 POSIX 接口还需适配。不能仅新增一个 Windows job 就声明支持。
 
-- `OHOS_FLUTTER`：匹配项目 Dart SDK 要求及插件的 ohos Flutter 可执行文件绝对路径。
-- `OHOS_SDK_NATIVE`：包含 `build/cmake/ohos.toolchain.cmake` 的 native SDK 目录。
-- `DEVECO_SDK_HOME`：匹配 ohos Flutter 的 DevEco SDK。
-- PATH 中提供 Git、CMake、Python 3、Node、Java、ohpm、hvigorw，以及 ohos SDK 要求的工具。
-- SDK 协议、依赖下载源、HAP 签名及可在无交互环境下执行的构建配置。
-
-先从干净检出的源码执行 `sh scripts/check_toolchains.sh ohos` 和 `sh scripts/build_ohos.sh`，确认可生成 `app/ohos/entry/build/default/outputs/default/*.hap`。工作流检出会清理工作目录，不依赖预先手工修改的 `app/ohos` 文件；如 SDK 要求自定义宿主或签名配置，应将非敏感配置纳入源码，敏感配置通过 runner 的安全配置注入。自托管 runner 应只运行受信任分支，本工作流不接受外部 PR 触发。
+完成适配后，Flutter 的 Windows Release 构建生成 `.exe`、DLL 和 `data` 资源目录，需整目录分发。该 `.exe` 是应用程序本身，不是安装器；可先压缩为便携 ZIP，另用 Inno Setup 制作 `Setup.exe`，或通过单独的配置/签名流程打包 MSIX / MSI。参见 [Flutter Windows 部署文档](https://docs.flutter.dev/deployment/windows)。
 
 托管 macOS/iOS/Android 任务无需额外仓库 secrets。发布仅用内置 `GITHUB_TOKEN`；仓库/组织需允许 Actions 创建 Release（发布 job 申请 `contents: write`）。源码检出不保留 Git 凭据。
 

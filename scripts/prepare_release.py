@@ -11,18 +11,23 @@ output = root / "artifacts"
 required = {
     "photo-enhancement-macos-arm64.zip",
     "photo-enhancement-macos-x86_64.zip",
+    "photo-enhancement-macos-arm64.dmg",
+    "photo-enhancement-macos-x86_64.dmg",
     "photo-enhancement-android-arm64-v8a.apk",
     "photo-enhancement-android-x86_64.apk",
     "photo-enhancement-ios-arm64-unsigned.zip",
     "photo-enhancement-ios-simulator-arm64.zip",
 }
-packages = sorted(p for p in output.iterdir() if p.suffix in {".zip", ".apk", ".hap"})
+packages = sorted(p for p in output.iterdir() if p.suffix in {".zip", ".apk", ".dmg"})
 missing = required - {p.name for p in packages}
 if missing:
     raise SystemExit(f"Missing packages: {', '.join(sorted(missing))}")
-if not any(p.name.startswith("photo-enhancement-ohos-arm64-v8a-") and p.suffix == ".hap" for p in packages):
-    raise SystemExit("Missing HarmonyOS release HAP")
 for package in packages:
+    if package.stat().st_size == 0:
+        raise SystemExit(f"Empty package: {package.name}")
+    # DMGs are verified with hdiutil on their macOS build runner.
+    if package.suffix == ".dmg":
+        continue
     with zipfile.ZipFile(package) as archive:
         if not archive.namelist() or archive.testzip() is not None:
             raise SystemExit(f"Empty or corrupt package: {package.name}")

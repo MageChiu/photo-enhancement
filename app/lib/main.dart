@@ -7,7 +7,9 @@ import 'package:flutter/services.dart';
 import 'editor_controller.dart';
 import 'models/edit.dart';
 import 'models/frame_marks.dart';
+import 'widgets/frame_template_controls.dart';
 import 'services/platform_files.dart';
+import 'services/app_identity.dart';
 
 void main() {
   WidgetsFlutterBinding.ensureInitialized();
@@ -18,7 +20,7 @@ class PhotoApp extends StatelessWidget {
   const PhotoApp({super.key});
   @override
   Widget build(BuildContext context) => MaterialApp(
-        title: '光屿 · Photo Enhancement',
+        title: AppIdentity.name,
         debugShowCheckedModeBanner: false,
         theme: ThemeData(
           brightness: Brightness.dark, useMaterial3: true,
@@ -54,6 +56,17 @@ class _EditorPageState extends State<EditorPage> {
   final editor = EditorController();
   int tab = 0, hslChannel = 0;
   bool _holdingOriginal = false;
+  bool _windowTitleInitialized = false;
+  String? _windowSource;
+
+  void _syncWindowTitle() {
+    final source = editor.sourcePath;
+    if (_windowTitleInitialized && source == _windowSource) return;
+    _windowTitleInitialized = true;
+    _windowSource = source;
+    unawaited(AppIdentity.updateWindowTitle(source));
+  }
+
   static const imageTypes = XTypeGroup(label: '照片与 RAW', extensions: [
     'jpg',
     'jpeg',
@@ -87,11 +100,14 @@ class _EditorPageState extends State<EditorPage> {
   @override
   void initState() {
     super.initState();
+    editor.addListener(_syncWindowTitle);
+    _syncWindowTitle();
     unawaited(editor.initialize());
   }
 
   @override
   void dispose() {
+    editor.removeListener(_syncWindowTitle);
     editor.dispose();
     super.dispose();
   }
@@ -105,6 +121,8 @@ class _EditorPageState extends State<EditorPage> {
   }
 
   Future<void> _open() => _guard(() async {
+        await editor.initialize();
+        if (!mounted || !editor.initialized) return;
         final files = await PlatformFiles.open(
             extensions: imageTypes.extensions!, multiple: true);
         if (files.isEmpty || !mounted) return;
@@ -135,31 +153,29 @@ class _EditorPageState extends State<EditorPage> {
         if (files.isNotEmpty && mounted) await editor.importLogo(files.first);
       });
   Future<String?> _nameDialog(String title, String initial) async {
-    final input = TextEditingController(text: initial);
-    try {
-      return await showDialog<String>(
-          context: context,
-          builder: (context) => AlertDialog(
-                title: Text(title),
-                content: SizedBox(
-                    width: 360,
-                    child: TextField(
-                        controller: input,
-                        autofocus: true,
-                        maxLength: 100,
-                        onSubmitted: (value) => Navigator.pop(context, value))),
-                actions: [
-                  TextButton(
-                      onPressed: () => Navigator.pop(context),
-                      child: const Text('取消')),
-                  FilledButton(
-                      onPressed: () => Navigator.pop(context, input.text),
-                      child: const Text('保存'))
-                ],
-              ));
-    } finally {
-      input.dispose();
-    }
+    var text = initial;
+    return showDialog<String>(
+        context: context,
+        builder: (context) => AlertDialog(
+              title: Text(title),
+              content: SizedBox(
+                  width: 360,
+                  child: TextFormField(
+                      initialValue: initial,
+                      onChanged: (value) => text = value,
+                      autofocus: true,
+                      maxLength: 100,
+                      onFieldSubmitted: (value) =>
+                          Navigator.pop(context, value))),
+              actions: [
+                TextButton(
+                    onPressed: () => Navigator.pop(context),
+                    child: const Text('取消')),
+                FilledButton(
+                    onPressed: () => Navigator.pop(context, text),
+                    child: const Text('保存'))
+              ],
+            ));
   }
 
   Future<void> _savePreset() => _guard(() async {
@@ -167,13 +183,13 @@ class _EditorPageState extends State<EditorPage> {
         if (name != null && mounted) await editor.savePreset(name);
       });
   Future<void> _saveFrame() => _guard(() async {
-        final name = await _nameDialog('保存边框预设', '我的相框');
+        final name = await _nameDialog('保存相框预设', '我的相框');
         if (name != null && mounted) {
           await editor.savePreset(name, frameOnly: true);
         }
       });
   Future<void> _exportFrame() => _guard(() async {
-        final name = await _nameDialog('导出边框预设（内含图标）', '我的相框');
+        final name = await _nameDialog('导出相框预设（内含图标）', '我的相框');
         if (name == null || !mounted) return;
         final content = await editor.presetStore
             .serialize(name, editor.recipe, frameOnly: true);
@@ -334,14 +350,14 @@ class _EditorPageState extends State<EditorPage> {
           const Icon(Icons.filter_frames_rounded,
               color: Color(0xffe5c185), size: 30),
           const SizedBox(width: 12),
-          const Text('光屿',
+          const Text(AppIdentity.name,
               style: TextStyle(
                   fontSize: 23, fontWeight: FontWeight.w600, letterSpacing: 4)),
           if (MediaQuery.sizeOf(context).width > 1000) ...[
             const SizedBox(width: 14),
-            const Text('PHOTO\nENHANCEMENT',
+            const Text(AppIdentity.description,
                 style: TextStyle(
-                    fontSize: 9, letterSpacing: 2, color: Colors.white38)),
+                    fontSize: 10, letterSpacing: 1, color: Colors.white38)),
             const SizedBox(width: 24),
             _pill('纯本地 · 离线处理', Icons.shield_outlined),
           ],
@@ -358,9 +374,9 @@ class _EditorPageState extends State<EditorPage> {
           ],
           const SizedBox(width: 10),
           OutlinedButton.icon(
-              onPressed: _open,
+              onPressed: editor.initialized ? _open : null,
               icon: const Icon(Icons.add_photo_alternate_outlined, size: 18),
-              label: const Text('导入')),
+              label: Text(editor.initialized ? '导入' : '准备中…')),
           const SizedBox(width: 10),
           FilledButton.icon(
               onPressed: editor.sourcePath != null && !editor.exporting
@@ -396,54 +412,56 @@ class _EditorPageState extends State<EditorPage> {
       child: SelectableText(editor.error ?? editor.notice!,
           style: const TextStyle(fontSize: 12)));
 
-  Widget _library() => Container(
+  Widget _library() => SizedBox(
       width: 200,
-      color: const Color(0xff17191d),
-      child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
-        const Padding(
-            padding: EdgeInsets.all(20),
-            child: Text('本地图库',
-                style: TextStyle(
-                    fontSize: 12,
-                    fontWeight: FontWeight.w600,
-                    letterSpacing: 2))),
-        Padding(
-            padding: const EdgeInsets.symmetric(horizontal: 14),
-            child: OutlinedButton.icon(
-                onPressed: _open,
-                icon: const Icon(Icons.add, size: 16),
-                label: const Text('添加照片'))),
-        const Padding(
-            padding: EdgeInsets.fromLTRB(20, 24, 20, 10),
-            child: Text('本次打开',
-                style: TextStyle(fontSize: 10, color: Colors.white38))),
-        Expanded(
-            child: ListView.builder(
-                itemCount: editor.recentFiles.length,
-                itemBuilder: (context, index) {
-                  final path = editor.recentFiles[index];
-                  final selected = path == editor.sourcePath;
-                  return ListTile(
-                      dense: true,
-                      selected: selected,
-                      selectedTileColor: const Color(0xff2b2924),
-                      leading: Icon(Icons.image_outlined,
-                          size: 18,
-                          color: selected
-                              ? const Color(0xffe5c185)
-                              : Colors.white38),
-                      title: Text(path.split(Platform.pathSeparator).last,
-                          maxLines: 2,
-                          overflow: TextOverflow.ellipsis,
-                          style: const TextStyle(fontSize: 11)),
-                      onTap: () => editor.open(path));
-                })),
-        const Padding(
-            padding: EdgeInsets.all(20),
-            child: Text('原图始终保留\n所有编辑均以参数记录',
-                style: TextStyle(
-                    fontSize: 10, height: 1.8, color: Colors.white30))),
-      ]));
+      child: Material(
+          color: const Color(0xff17191d),
+          child:
+              Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+            const Padding(
+                padding: EdgeInsets.all(20),
+                child: Text('本地图库',
+                    style: TextStyle(
+                        fontSize: 12,
+                        fontWeight: FontWeight.w600,
+                        letterSpacing: 2))),
+            Padding(
+                padding: const EdgeInsets.symmetric(horizontal: 14),
+                child: OutlinedButton.icon(
+                    onPressed: _open,
+                    icon: const Icon(Icons.add, size: 16),
+                    label: const Text('添加照片'))),
+            const Padding(
+                padding: EdgeInsets.fromLTRB(20, 24, 20, 10),
+                child: Text('本次打开',
+                    style: TextStyle(fontSize: 10, color: Colors.white38))),
+            Expanded(
+                child: ListView.builder(
+                    itemCount: editor.recentFiles.length,
+                    itemBuilder: (context, index) {
+                      final path = editor.recentFiles[index];
+                      final selected = path == editor.sourcePath;
+                      return ListTile(
+                          dense: true,
+                          selected: selected,
+                          selectedTileColor: const Color(0xff2b2924),
+                          leading: Icon(Icons.image_outlined,
+                              size: 18,
+                              color: selected
+                                  ? const Color(0xffe5c185)
+                                  : Colors.white38),
+                          title: Text(path.split(Platform.pathSeparator).last,
+                              maxLines: 2,
+                              overflow: TextOverflow.ellipsis,
+                              style: const TextStyle(fontSize: 11)),
+                          onTap: () => editor.open(path));
+                    })),
+            const Padding(
+                padding: EdgeInsets.all(20),
+                child: Text('原图始终保留\n所有编辑均以参数记录',
+                    style: TextStyle(
+                        fontSize: 10, height: 1.8, color: Colors.white30))),
+          ])));
 
   Widget _canvas() => Column(children: [
         SizedBox(
@@ -547,9 +565,9 @@ class _EditorPageState extends State<EditorPage> {
             style: TextStyle(color: Colors.white38, fontSize: 12)),
         const SizedBox(height: 30),
         FilledButton.icon(
-            onPressed: _open,
+            onPressed: editor.initialized ? _open : null,
             icon: const Icon(Icons.add, size: 18),
-            label: const Text('选择照片')),
+            label: Text(editor.initialized ? '选择照片' : '正在准备照片编辑…')),
         const SizedBox(height: 16),
         const Text('JPEG / PNG / HEIC / WebP / 相机 RAW',
             style: TextStyle(color: Colors.white24, fontSize: 10)),
@@ -581,7 +599,7 @@ class _EditorPageState extends State<EditorPage> {
             segments: const [
               ButtonSegment(value: 0, label: Text('调色')),
               ButtonSegment(value: 1, label: Text('风格')),
-              ButtonSegment(value: 2, label: Text('边框')),
+              ButtonSegment(value: 2, label: Text('相框')),
               ButtonSegment(value: 3, label: Text('高级')),
             ],
             selected: {tab},
@@ -667,8 +685,16 @@ class _EditorPageState extends State<EditorPage> {
   }
 
   List<Widget> _lookControls() => [
-        _section('风格', '先试「寒峻」：低调明暗、冷灰绿、暗红与材质感。'),
-        for (final group in ['冷峻纪实', '纪实光影', '基础纪实', '本地预设']) ...[
+        _section('风格', '按系列选择色彩与影调，试用配方可继续调整强度和质感。'),
+        for (final group in [
+          '冷峻纪实',
+          '胶片灵感',
+          '经典影调',
+          '自然色彩',
+          '纪实光影',
+          '基础纪实',
+          '本地预设',
+        ]) ...[
           if (editor.presetStore.presets.any((p) => p.group == group))
             Padding(
                 padding: const EdgeInsets.only(bottom: 10, top: 8),
@@ -793,7 +819,162 @@ class _EditorPageState extends State<EditorPage> {
                   onPressed: _exportPreset, child: const Text('导出预设'))),
         ]),
       ];
+  void _removeFrame() => editor.change(editor.recipe.copyWith(
+      borderWidth: 0,
+      borderBottom: 0,
+      template: editor.recipe.template.copyWith(category: 'plain')));
+
   List<Widget> _borderControls() => [
+        _section('相框类型', '选择类型，再设置该类型的样式与内容。'),
+        OutlinedButton.icon(
+            key: const ValueKey('remove-frame'),
+            onPressed: _removeFrame,
+            icon: const Icon(Icons.hide_image_outlined, size: 16),
+            label: const Text('取消相框')),
+        const SizedBox(height: 10),
+        Wrap(spacing: 6, runSpacing: 6, children: [
+          for (final entry in const {
+            'plain': '留白',
+            'photo': '摄影',
+            'film': '胶片',
+            'social': '社交卡片'
+          }.entries)
+            ChoiceChip(
+                key: ValueKey('frame-category-${entry.key}'),
+                label: Text(entry.value),
+                showCheckmark: false,
+                selected: editor.recipe.template.category == entry.key,
+                onSelected: (_) {
+                  editor.change(editor.recipe.copyWith(
+                      template:
+                          editor.recipe.template.copyWith(category: entry.key),
+                      borderWidth:
+                          entry.key == 'plain' && editor.recipe.borderWidth == 0
+                              ? .05
+                              : editor.recipe.borderWidth,
+                      borderBottom: entry.key == 'photo' &&
+                              editor.recipe.borderBottom == 0
+                          ? .15
+                          : editor.recipe.borderBottom));
+                }),
+        ]),
+        const SizedBox(height: 16),
+        if (editor.recipe.template.category == 'photo')
+          ..._photographyControls(),
+        if (editor.recipe.template.category == 'plain') ...[
+          _section('留白相框', '为照片添加纯色留白，保留照片原比例。'),
+          TextButton(onPressed: _removeFrame, child: const Text('无边框')),
+          _slider('留白宽度', editor.recipe.borderWidth,
+              max: .25,
+              label: '${(editor.recipe.borderWidth * 100).toStringAsFixed(1)}%',
+              onChanged: (v) => editor.change(
+                  editor.recipe.copyWith(borderWidth: v),
+                  transient: true)),
+          const Text('边框颜色',
+              style: TextStyle(fontSize: 11, color: Colors.white70)),
+          const SizedBox(height: 12),
+          Wrap(spacing: 12, children: [
+            for (final color in [0xffffff, 0xf3eee4, 0x151515, 0x314137])
+              InkWell(
+                  onTap: () =>
+                      editor.change(editor.recipe.copyWith(borderColor: color)),
+                  child: Container(
+                      width: 30,
+                      height: 30,
+                      decoration: BoxDecoration(
+                          color: Color(0xff000000 | color),
+                          shape: BoxShape.circle,
+                          border: Border.all(
+                              color: editor.recipe.borderColor == color
+                                  ? const Color(0xffe5c185)
+                                  : Colors.white24,
+                              width: 2))))
+          ]),
+        ],
+        if (editor.recipe.template.decorated)
+          FrameTemplateControls(
+              recipe: editor.recipe,
+              onChanged: (value) =>
+                  editor.change(editor.recipe.copyWith(template: value)),
+              onAvatar: () => _guard(() async {
+                    final files = await PlatformFiles.open(extensions: ['png']);
+                    if (files.isEmpty || !mounted) return;
+                    final file = File(files.first);
+                    if (await file.length() > 4 * 1024 * 1024) {
+                      throw const FormatException('头像不能超过 4MB');
+                    }
+                    final path = await editor.presetStore
+                        .cacheLogo(await file.readAsBytes());
+                    if (mounted) {
+                      editor.change(editor.recipe.copyWith(
+                          template: editor.recipe.template
+                              .copyWith(avatarPath: path)));
+                    }
+                  })),
+        if (editor.presetStore.presets.any((p) => p.frameOnly))
+          const Padding(
+              padding: EdgeInsets.only(bottom: 8),
+              child: Text('我的完整边框预设',
+                  style: TextStyle(fontSize: 11, color: Colors.white70))),
+        for (final preset
+            in editor.presetStore.presets.where((p) => p.frameOnly))
+          Padding(
+              padding: const EdgeInsets.only(bottom: 8),
+              child: OutlinedButton(
+                  onPressed: () => editor.applyPreset(preset),
+                  child: Text(preset.name))),
+        ..._frameFooter(),
+      ];
+  List<Widget> _frameFooter() => [
+        const Divider(height: 28),
+        OutlinedButton.icon(
+            onPressed: _saveFrame,
+            icon: const Icon(Icons.bookmark_add_outlined, size: 16),
+            label: const Text('保存相框预设')),
+        Row(children: [
+          Expanded(
+              child: TextButton(
+                  onPressed: _importPreset, child: const Text('导入相框预设'))),
+          Expanded(
+              child: TextButton(
+                  onPressed: _exportFrame, child: const Text('导出相框预设'))),
+        ]),
+        if (editor.recipe.template.category != 'plain') ...[
+          DropdownButtonFormField<String>(
+              key: ValueKey('font-${editor.recipe.frameFont}'),
+              initialValue: editor.recipe.frameFont,
+              decoration: const InputDecoration(labelText: '相框文字字体'),
+              items: [
+                for (final font in frameFonts.entries)
+                  DropdownMenuItem(
+                      value: font.key,
+                      enabled: font.key != 'custom' ||
+                          editor.recipe.fontPath.isNotEmpty,
+                      child: Text(font.value))
+              ],
+              onChanged: (value) {
+                if (value != null) {
+                  editor.change(editor.recipe.copyWith(frameFont: value));
+                }
+              }),
+          const SizedBox(height: 10),
+          OutlinedButton.icon(
+              onPressed: _font,
+              icon: const Icon(Icons.text_fields, size: 16),
+              label: const Text('导入本地字体')),
+          if (editor.recipe.frameFont == 'custom')
+            Text(
+                editor.recipe.fontPath.isEmpty
+                    ? '请选择字体文件'
+                    : editor.recipe.fontPath.split(Platform.pathSeparator).last,
+                style: const TextStyle(fontSize: 10, color: Colors.white38)),
+          const Text('简洁无衬线在胶片和社交卡片中自动支持中文；也可选择思源黑体或导入本地字体。',
+              style:
+                  TextStyle(fontSize: 10, color: Colors.white38, height: 1.6)),
+        ],
+      ];
+
+  List<Widget> _photographyControls() => [
         _section('让照片完整呈现', '样式只调整留白与排版，保留所选标识、字体和信息。'),
         Wrap(spacing: 6, runSpacing: 6, children: [
           for (final style in const [
@@ -824,18 +1005,6 @@ class _EditorPageState extends State<EditorPage> {
                         : style.layout))),
         ]),
         const SizedBox(height: 24),
-        if (editor.presetStore.presets.any((p) => p.frameOnly))
-          const Padding(
-              padding: EdgeInsets.only(bottom: 8),
-              child: Text('我的完整边框预设',
-                  style: TextStyle(fontSize: 11, color: Colors.white70))),
-        for (final preset
-            in editor.presetStore.presets.where((p) => p.frameOnly))
-          Padding(
-              padding: const EdgeInsets.only(bottom: 8),
-              child: OutlinedButton(
-                  onPressed: () => editor.applyPreset(preset),
-                  child: Text(preset.name))),
         _slider('边框宽度', editor.recipe.borderWidth,
             max: .25,
             label: '${(editor.recipe.borderWidth * 100).toStringAsFixed(1)}%',
@@ -908,18 +1077,17 @@ class _EditorPageState extends State<EditorPage> {
         const Text('缺失的拍摄信息自动隐藏。文字和标识显示在底部留白区域。',
             style: TextStyle(fontSize: 10, color: Colors.white38)),
         const SizedBox(height: 18),
-        const Text('标识来源',
+        const Text('相机标识',
             style: TextStyle(fontSize: 11, color: Colors.white70)),
         const SizedBox(height: 10),
         SegmentedButton<String>(
+            key: const ValueKey('camera-mark-source'),
             segments: const [
               ButtonSegment(value: 'auto', label: Text('自动')),
               ButtonSegment(value: 'manual', label: Text('手动')),
               ButtonSegment(value: 'hidden', label: Text('隐藏')),
             ],
-            selected: {
-              _markMode
-            },
+            selected: {_markMode},
             onSelectionChanged: (values) {
               final mode = values.single;
               editor.change(editor.recipe.copyWith(
@@ -929,10 +1097,17 @@ class _EditorPageState extends State<EditorPage> {
                           ? (editor.recipe.frameMark.isNotEmpty &&
                                   editor.recipe.frameMark != 'auto'
                               ? editor.recipe.frameMark
-                              : 'sony')
+                              : (markForMake(
+                                          editor.metadata['make'] as String? ??
+                                              '',
+                                          editor.metadata['model'] as String? ??
+                                              '')
+                                      .isNotEmpty
+                                  ? markForMake(
+                                      editor.metadata['make'] as String? ?? '',
+                                      editor.metadata['model'] as String? ?? '')
+                                  : 'sony'))
                           : '',
-                  frameAccent:
-                      mode == 'hidden' ? '' : editor.recipe.frameAccent,
                   logoPath: mode == 'manual' ? editor.recipe.logoPath : '',
                   frameBrand: 0,
                   borderBottom:
@@ -960,38 +1135,80 @@ class _EditorPageState extends State<EditorPage> {
           ]),
         ],
         if (_markMode == 'hidden')
-          const Text('标识已隐藏，机型与拍摄参数仍按各自开关显示。',
+          const Text('相机标识已隐藏；镜头标识和拍摄信息仍按各自设置显示。',
               style: TextStyle(fontSize: 10, color: Colors.white54)),
         const SizedBox(height: 16),
-        DropdownButtonFormField<String>(
-            key: ValueKey('accent-${editor.recipe.frameAccent}'),
-            isExpanded: true,
-            initialValue: editor.recipe.frameAccent,
-            decoration: const InputDecoration(labelText: '镜头辅助标识'),
-            items: [
-              for (final mark in frameAccents.entries)
-                DropdownMenuItem(
-                    value: mark.key,
-                    child: Text(mark.value, overflow: TextOverflow.ellipsis))
+        const Text('镜头标识',
+            style: TextStyle(fontSize: 11, color: Colors.white70)),
+        const SizedBox(height: 10),
+        SegmentedButton<String>(
+            key: const ValueKey('lens-mark-source'),
+            segments: const [
+              ButtonSegment(value: 'auto', label: Text('自动')),
+              ButtonSegment(value: 'manual', label: Text('手动')),
+              ButtonSegment(value: 'hidden', label: Text('隐藏')),
             ],
-            onChanged: (value) {
-              if (value != null) {
-                editor.change(editor.recipe.copyWith(
-                    frameAccent: value,
-                    logoPath: '',
-                    frameBrand: 0,
-                    borderBottom:
-                        value.isNotEmpty && editor.recipe.borderBottom == 0
-                            ? .15
-                            : editor.recipe.borderBottom));
-              }
+            selected: {_accentMode},
+            onSelectionChanged: (values) {
+              final mode = values.single;
+              final detected = accentForLens(
+                  editor.metadata['lensMake'] as String? ?? '',
+                  editor.metadata['lensModel'] as String? ?? '');
+              editor.change(editor.recipe.copyWith(
+                  frameAccent: mode == 'auto'
+                      ? 'auto'
+                      : mode == 'hidden'
+                          ? ''
+                          : (_accentMode == 'manual'
+                              ? editor.recipe.frameAccent
+                              : detected.isNotEmpty
+                                  ? detected
+                                  : 'sigma'),
+                  borderBottom:
+                      mode != 'hidden' && editor.recipe.borderBottom == 0
+                          ? .15
+                          : editor.recipe.borderBottom));
             }),
+        if (_accentMode == 'manual') ...[
+          const SizedBox(height: 10),
+          DropdownButtonFormField<String>(
+              key: ValueKey('accent-${editor.recipe.frameAccent}'),
+              isExpanded: true,
+              initialValue: editor.recipe.frameAccent,
+              decoration: const InputDecoration(labelText: '选择镜头标识'),
+              items: [
+                for (final mark in frameAccents.entries.where(
+                    (entry) => entry.key.isNotEmpty && entry.key != 'auto'))
+                  DropdownMenuItem(
+                      value: mark.key,
+                      child: Text(mark.value, overflow: TextOverflow.ellipsis))
+              ],
+              onChanged: (value) {
+                if (value != null) {
+                  editor.change(editor.recipe.copyWith(frameAccent: value));
+                }
+              }),
+        ],
         const SizedBox(height: 10),
         Text(
-            editor.recipe.frameAccent == 'auto'
+            _accentMode == 'auto'
                 ? _lensRecommendation
-                : '镜头标识可独立选择，不根据机身品牌推断。',
-            style: TextStyle(fontSize: 10, color: Colors.white38)),
+                : _accentMode == 'hidden'
+                    ? '镜头标识已隐藏，相机标识不受影响。'
+                    : '手动选择的镜头标识会保留，不根据机身品牌推断。',
+            style: const TextStyle(fontSize: 10, color: Colors.white38)),
+        SwitchListTile(
+            contentPadding: EdgeInsets.zero,
+            title: const Text('显示镜头名称', style: TextStyle(fontSize: 12)),
+            subtitle: Text(
+                editor.metadata['lensModel'] as String? ?? '缺少镜头名称时自动留空',
+                style: const TextStyle(fontSize: 10)),
+            value: editor.recipe.frameLensName,
+            onChanged: (enabled) => editor.change(editor.recipe.copyWith(
+                frameLensName: enabled,
+                borderBottom: enabled && editor.recipe.borderBottom == 0
+                    ? .15
+                    : editor.recipe.borderBottom))),
         const SizedBox(height: 12),
         DropdownButtonFormField<int>(
             key: ValueKey('tone-${editor.recipe.markTone}'),
@@ -1047,49 +1264,6 @@ class _EditorPageState extends State<EditorPage> {
             style: const TextStyle(
                 fontSize: 10, color: Colors.white54, height: 1.6)),
         const SizedBox(height: 16),
-        const Divider(height: 28),
-        OutlinedButton.icon(
-            onPressed: _saveFrame,
-            icon: const Icon(Icons.bookmark_add_outlined, size: 16),
-            label: const Text('保存边框预设')),
-        Row(children: [
-          Expanded(
-              child: TextButton(
-                  onPressed: _importPreset, child: const Text('导入边框预设'))),
-          Expanded(
-              child: TextButton(
-                  onPressed: _exportFrame, child: const Text('导出边框预设'))),
-        ]),
-        DropdownButtonFormField<String>(
-            key: ValueKey('font-${editor.recipe.frameFont}'),
-            initialValue: editor.recipe.frameFont,
-            decoration: const InputDecoration(labelText: '机型、参数与题注字体'),
-            items: [
-              for (final font in frameFonts.entries)
-                DropdownMenuItem(
-                    value: font.key,
-                    enabled: font.key != 'custom' ||
-                        editor.recipe.fontPath.isNotEmpty,
-                    child: Text(font.value))
-            ],
-            onChanged: (value) {
-              if (value != null) {
-                editor.change(editor.recipe.copyWith(frameFont: value));
-              }
-            }),
-        const SizedBox(height: 10),
-        OutlinedButton.icon(
-            onPressed: _font,
-            icon: const Icon(Icons.text_fields, size: 16),
-            label: const Text('导入本地字体')),
-        if (editor.recipe.frameFont == 'custom')
-          Text(
-              editor.recipe.fontPath.isEmpty
-                  ? '请选择字体文件'
-                  : editor.recipe.fontPath.split(Platform.pathSeparator).last,
-              style: const TextStyle(fontSize: 10, color: Colors.white38)),
-        const Text('内置字体用于拉丁字母与数字；中文题注请选择含中文字形的本地字体。品牌字标保持原样。',
-            style: TextStyle(fontSize: 10, color: Colors.white38, height: 1.6)),
         const SizedBox(height: 20),
         ExpansionTile(
             title: const Text('高级排版'),
@@ -1113,7 +1287,7 @@ class _EditorPageState extends State<EditorPage> {
                   (title: '品牌主标识', indices: [0, 1, 2]),
                   (title: '镜头辅助标识', indices: [3, 4, 5]),
                   (title: '机型与拍摄参数', indices: [6, 7, 8, 9]),
-                  (title: '日期与自定义题注', indices: [10, 11, 12]),
+                  (title: '镜头名称、日期与题注', indices: [10, 11, 12]),
                 ])
                   ExpansionTile(
                       title: Text(group.title,
@@ -1165,6 +1339,13 @@ class _EditorPageState extends State<EditorPage> {
           ? '照片缺少可识别的镜头信息；标识留空，可手动选择。'
           : '已读到镜头：$model。未匹配标识，可手动选择。';
     }
+    final camera = editor.recipe.frameMark == 'auto'
+        ? markForMake(editor.metadata['make'] as String? ?? '',
+            editor.metadata['model'] as String? ?? '')
+        : editor.recipe.frameMark;
+    if (accentForCombination(camera, id, automatic: true).isEmpty) {
+      return '已识别镜头${model.isEmpty ? '' : '：$model'}；与相机品牌相同，不重复显示字标。可开启镜头名称。';
+    }
     return '根据镜头推荐：${frameAccents[id]}${model.isEmpty ? '' : ' · $model'}';
   }
 
@@ -1199,13 +1380,18 @@ class _EditorPageState extends State<EditorPage> {
   String get _markMode {
     if (editor.recipe.frameMark == 'auto') return 'auto';
     if (editor.recipe.frameMark.isNotEmpty ||
-        editor.recipe.frameAccent.isNotEmpty ||
         editor.recipe.logoPath.isNotEmpty ||
         editor.recipe.frameBrand != 0) {
       return 'manual';
     }
     return 'hidden';
   }
+
+  String get _accentMode => editor.recipe.frameAccent == 'auto'
+      ? 'auto'
+      : editor.recipe.frameAccent.isEmpty
+          ? 'hidden'
+          : 'manual';
 
   Widget _frameMarkTile(String id, String label) {
     final selected =
@@ -1343,7 +1529,12 @@ class _EditorPageState extends State<EditorPage> {
       child: Row(children: [
         const Icon(Icons.circle, size: 5, color: Color(0xff8aa591)),
         const SizedBox(width: 7),
-        Text(editor.processing ? '正在生成预览…' : '本地处理 · 原图不变',
+        Text(
+            !editor.initialized
+                ? (editor.error != null ? '初始化失败，请查看错误信息' : '正在准备滤镜与相框素材…')
+                : editor.processing
+                    ? '正在生成预览…'
+                    : '本地处理 · 原图不变',
             style: const TextStyle(fontSize: 9, color: Colors.white38)),
         const Spacer(),
         const Text('16-bit · Linear sRGB',

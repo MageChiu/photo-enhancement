@@ -18,10 +18,9 @@ Commit: $GITHUB_SHA
 Source: $GITHUB_REF
 Build: $GITHUB_SERVER_URL/$GITHUB_REPOSITORY/actions/runs/$GITHUB_RUN_ID
 
-- macOS: arm64 and x86_64 ZIPs, ad-hoc signed, not notarized.
+- macOS: arm64 and x86_64 application ZIPs and drag-to-Applications DMGs, ad-hoc signed, not notarized.
 - Android: arm64-v8a and x86_64 APKs, development signing.
 - iOS: unsigned arm64 device app (requires signing before installation) and arm64 simulator debug app.
-- HarmonyOS: arm64-v8a release HAP; signing follows the self-hosted runner configuration.
 - Verify downloads with SHA256SUMS; build-info.json records provenance.
 EOF_NOTES
 # Recover an interrupted draft, while keeping already published releases immutable.

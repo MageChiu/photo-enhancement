@@ -330,7 +330,6 @@ class EditorController extends ChangeNotifier {
         logoPath: ownedPath,
         frameBrand: 0,
         frameMark: '',
-        frameAccent: '',
         borderBottom: recipe.borderBottom > 0 ? recipe.borderBottom : .16));
   }
 
@@ -354,7 +353,8 @@ class EditorController extends ChangeNotifier {
       if ((snapshot.frameMark == 'auto' && make.isEmpty) ||
           (snapshot.frameAccent == 'auto' &&
               lensMake.isEmpty &&
-              lensModel.isEmpty)) {
+              lensModel.isEmpty) ||
+          (snapshot.frameLensName && lensModel.isEmpty)) {
         final info = await _previewWorker
             .call('inspect', {'path': path, 'recipe': snapshot.toJson()});
         make = (info['info'] as Map)['make'] as String? ?? '';

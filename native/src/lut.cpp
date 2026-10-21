@@ -8,8 +8,14 @@ std::unique_ptr<pe_lut> load_lut(const std::string& path) {
   require(std::filesystem::file_size(path) <= 16 * 1024 * 1024, "LUT file is too large", PE_LIMIT_EXCEEDED);
   auto lut = std::make_unique<pe_lut>();
   std::string line;
+  size_t line_number = 0;
+  const auto filename = std::filesystem::path(path).filename().string();
   bool have_size = false, have_low = false, have_high = false;
   while (std::getline(file, line)) {
+    ++line_number;
+    const auto location = [&] { return "LUT " + filename + " 第 " + std::to_string(line_number) + " 行："; };
+    if (line.find('\0') != std::string::npos)
+      throw Error(PE_INVALID_ARGUMENT, location() + "文件包含零字节，LUT 资源已损坏，请重新生成或重新导入");
     line = line.substr(0, line.find('#'));
     std::istringstream stream(line);
     std::string key;
@@ -28,14 +34,17 @@ std::unique_ptr<pe_lut> load_lut(const std::string& path) {
       require(have_size && lut->values.size() < size_t(lut->size) * lut->size * lut->size, "Unexpected LUT data");
       std::array<double, 3> v;
       std::istringstream values(line);
-      require(bool(values >> v[0] >> v[1] >> v[2]), "Invalid LUT row or unsupported directive: " + key);
+      if (!(values >> v[0] >> v[1] >> v[2]))
+        throw Error(PE_INVALID_ARGUMENT, location() + "无效数据或未支持的指令（每行需要三个通道值）：" + key);
       std::string extra;
       require(!(values >> extra), "Unexpected trailing LUT values");
       for (double x : v) require(std::isfinite(x) && x >= 0 && x <= 1, "MVP LUT values must be in [0, 1]");
       lut->values.push_back(v);
     }
   }
-  require(have_size && lut->values.size() == size_t(lut->size) * lut->size * lut->size, "Incomplete 3D LUT");
+  require(file.eof(), "Cannot finish reading LUT: " + filename, PE_IO_ERROR);
+  require(have_size && lut->values.size() == size_t(lut->size) * lut->size * lut->size,
+      "Incomplete 3D LUT: " + filename + "，实际数据行数 " + std::to_string(lut->values.size()));
   for (int c = 0; c < 3; ++c)
     require(std::isfinite(lut->low[c]) && std::isfinite(lut->high[c]) && lut->high[c] > lut->low[c], "Invalid LUT domain range");
   return lut;

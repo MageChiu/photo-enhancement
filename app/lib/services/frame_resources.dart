@@ -1,5 +1,6 @@
 import 'dart:io';
-import 'package:flutter/services.dart';
+import 'dart:convert';
+import 'bundled_assets.dart';
 import '../models/edit.dart';
 import '../models/frame_marks.dart';
 
@@ -7,19 +8,65 @@ import '../models/frame_marks.dart';
 EditRecipe resolveFrameResources(
     EditRecipe recipe, String make, Map<String, String> paths,
     {String lensMake = '', String lensModel = '', String cameraModel = ''}) {
-  if (recipe.borderBottom == 0) return recipe;
+  if (recipe.template.category == 'plain') {
+    return recipe.copyWith(
+        borderBottom: 0,
+        frameFields: 0,
+        frameBrand: 0,
+        logoPath: '',
+        accentPath: '',
+        frameMark: '',
+        frameAccent: '',
+        frameAdvanced: false);
+  }
+  if (recipe.borderBottom == 0 && !recipe.template.decorated) return recipe;
   var result = recipe;
   if (recipe.frameFont != 'custom') {
-    final font = paths['font:${recipe.frameFont}'];
+    final t = recipe.template;
+    final text = t.category == 'film'
+        ? '${t.filmLabel}${t.frameNumber}${t.timestamp}'
+        : '${t.title}${t.account}${t.location}${t.body}${t.timestamp}${t.stats}';
+    final useCjk = t.decorated &&
+        recipe.frameFont == 'sans' &&
+        text.runes.any((c) => c > 255);
+    final font = paths['font:${useCjk ? 'cjk' : recipe.frameFont}'];
     if (font == null) throw StateError('内置边框字体尚未就绪');
     result = result.copyWith(fontPath: font);
+  }
+  if (recipe.template.decorated) {
+    return result.copyWith(logoPath: '', accentPath: '', frameBrand: 0);
   }
   final mark = recipe.frameMark == 'auto'
       ? markForMake(make, cameraModel)
       : recipe.frameMark;
-  final accent = recipe.frameAccent == 'auto'
-      ? accentForLens(lensMake, lensModel)
-      : recipe.frameAccent;
+  final accent = accentForCombination(
+      mark,
+      recipe.frameAccent == 'auto'
+          ? accentForLens(lensMake, lensModel)
+          : recipe.frameAccent,
+      automatic: recipe.frameAccent == 'auto');
+  // Resolve the optional lens text only for rendering. Keep the saved user
+  // caption and its visibility switch untouched.
+  if (recipe.frameLensName && lensModel.trim().isNotEmpty) {
+    final text = [
+      lensModel.trim(),
+      if ((recipe.frameFields & 64) != 0 && recipe.caption.isNotEmpty)
+        recipe.caption
+    ].join(' · ');
+    final runes = <int>[];
+    var bytes = 0;
+    for (final rune in text.runes) {
+      final size = utf8.encode(String.fromCharCode(rune)).length;
+      if (bytes + size > 511) break;
+      runes.add(rune);
+      bytes += size;
+    }
+    result = result.copyWith(
+        caption: String.fromCharCodes(runes),
+        frameFields: recipe.frameFields | 64);
+  }
+  final customLogo = recipe.frameMark.isEmpty ? recipe.logoPath : '';
+
   final tone = resolvedMarkTone(recipe.markTone, recipe.borderColor);
   // Accept old resource maps while callers migrate from combined PNGs.
   final combined = paths[frameAssetKey(mark, accent, tone)];
@@ -35,10 +82,11 @@ EditRecipe resolveFrameResources(
   }
 
   return result.copyWith(
-      logoPath: mark.isEmpty ? recipe.logoPath : artwork(mark),
+      logoPath: mark.isEmpty ? customLogo : artwork(mark),
       accentPath: accent.isEmpty ? '' : artwork(accent),
-      frameBrand:
-          mark.isNotEmpty || accent.isNotEmpty || recipe.logoPath.isNotEmpty
+      frameBrand: mark.isNotEmpty || accent.isNotEmpty || customLogo.isNotEmpty
+          ? 0
+          : recipe.frameMark == 'auto'
               ? 0
               : recipe.frameBrand);
 }
@@ -49,12 +97,10 @@ class FrameResources {
   Future<void> initialize(Directory directory) async {
     final cache = await Directory('${directory.path}/frame-assets-v2')
         .create(recursive: true);
-    for (final font in ['sans', 'mono', 'serif']) {
-      final data = await rootBundle.load('assets/frame_fonts/$font.ttf');
+    final assets = <String, File>{};
+    for (final font in ['sans', 'mono', 'serif', 'cjk']) {
       final file = File('${cache.path}/$font.ttf');
-      await file.writeAsBytes(
-          data.buffer.asUint8List(data.offsetInBytes, data.lengthInBytes),
-          flush: true);
+      assets['assets/frame_fonts/$font.ttf'] = file;
       paths['font:$font'] = file.path;
     }
     // Keep artwork separate: independent placement does not need pre-generated
@@ -63,13 +109,11 @@ class FrameResources {
       ..removeAll(['', 'auto']);
     for (final id in ids) {
       for (var tone = 1; tone <= 3; ++tone) {
-        final data = await rootBundle.load('assets/frame_marks/$id-$tone.png');
         final file = File('${cache.path}/$id-$tone.png');
-        await file.writeAsBytes(
-            data.buffer.asUint8List(data.offsetInBytes, data.lengthInBytes),
-            flush: true);
+        assets['assets/frame_marks/$id-$tone.png'] = file;
         paths['art:$id:$tone'] = file.path;
       }
     }
+    await installBundledAssets(assets);
   }
 }

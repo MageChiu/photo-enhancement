@@ -8,7 +8,7 @@
 
 ## GitHub 自动构建与发布
 
-推送 `dev/dev-v*` 分支运行四端构建、测试和发布包校验；推送 `release-*` 分支生成预发布，推送任意 tag 生成正式 Release。产物包含 macOS 双架构 ZIP、Android 双 ABI APK、iOS 未签名设备包及模拟器包、鸿蒙 HAP，以及 SHA256 校验和。鸿蒙需要先配置专用自托管 runner，四端全部成功后才发布。配置方法、签名边界及使用示例见 [GitHub 流水线](docs/GitHub流水线.md)。
+推送 `dev/dev-v*` 分支运行与 release 相同的 macOS、Android、iOS 应用构建、打包和发布包校验，但不发布且不额外运行测试；推送 `release-*` 分支生成预发布，推送任意 tag 生成正式 Release。产物包含 macOS 双架构 ZIP / DMG、Android 双 ABI APK、iOS 未签名设备包及模拟器包，以及 SHA256 校验和。鸿蒙暂不参与流水线；上述三端全部成功后才发布。Windows 尚未接入。配置方法、签名边界及使用示例见 [GitHub 流水线](docs/GitHub流水线.md)。
 
 ## 获取源码与子模块
 
@@ -44,7 +44,7 @@ git submodule update --init --recursive
 macOS 安装依赖：
 
 ```sh
-brew install cmake pkgconf jpeg-turbo libpng little-cms2 freetype webp libheif
+brew install cmake pkgconf jpeg-turbo libpng libtiff little-cms2 freetype webp libheif
 python3 scripts/generate_luts.py
 cmake -S . -B build/native -DCMAKE_BUILD_TYPE=Release
 cmake --build build/native --parallel 8
@@ -57,7 +57,7 @@ ctest --test-dir build/native --output-on-failure
 - build/native/photo_cli：独立命令行入口。
 - build/native/photo_core_tests：测试程序（包含多项独立回归场景）。
 
-LibRaw 直接从 third_party/LibRaw 的源码编译，不依赖目录内已有的静态库或可执行文件。JPEG、PNG、lcms2、FreeType 是必需依赖。HEIF、WebP 可用下面的配置关闭：
+LibRaw 直接从 third_party/LibRaw 的源码编译，不依赖目录内已有的静态库或可执行文件。JPEG、PNG、libtiff（≥4.6.1）、lcms2、FreeType 是必需依赖。HEIF、WebP 可用下面的配置关闭：
 
 ```sh
 cmake -S . -B build/native -DPE_WITH_HEIF=OFF -DPE_WITH_WEBP=OFF
@@ -70,7 +70,8 @@ cmake -S . -B build/native -DPE_WITH_HEIF=OFF -DPE_WITH_WEBP=OFF
 - JPEG 导入先进行解码器缩放，再生成预览，基线 JPEG 无需先在内存中展开原尺寸照片。
 - JPEG→JPEG/PNG/HEIF 原尺寸导出的编辑阶段使用分条处理和私有临时磁盘缓存，支持 EXIF 方向、ICC、调色、LUT、锐化／降噪及文字边框。临时空间约为源像素数 × 8 字节；退出处理后自动释放。
 - RAW 直接交给 LibRaw 的文件流，不先把压缩文件整份复制到内存。支持的整数单平面 Bayer／X-Trans 半尺寸预览按解包、处理、输出三个阶段估算，不再统一按全尺寸 RGB 管线计费；完整传感器解包的开销仍保留。解包后确认实际缓冲类型，无法确认半尺寸处理时恢复保守估算。RAW 输出直接写入 RGBA16 行缓冲并原地扩展 RGB，避免额外整幅 RGB16 副本。
-- 渐进式 JPEG 仍需全尺寸系数缓冲，计入内存预算；其他输入格式和 RAW 暂时需要整图处理；HEIF 直接接收编辑条带，超过 1024px 的输出使用 1024×1024 HEIF grid 图块逐个编码，仅保留一条 RGB8 带和当前图块；小图使用单平面。已压缩图块仍由 libheif 暂存，预算计入输出像素数 × 8 字节、行带、编码器工作区及固定余量，并非恒定内存或无限大图支持。预算不足时会报告预计内存和当前预算，不承诺所有设备都能处理所有中画幅 RAW。HEIF 网格编码要求 libheif ≥1.19.7（本轮待用户构建验证）。
+- 标准整数单平面 Bayer RAW 原尺寸导出沿用 LibRaw AHD 和相机色彩转换，按解包／处理阶段估算内存，逐行写入私有 RGBA16 磁盘缓存后复用分条编辑及 JPEG/PNG/HEIF 编码。避免整图调色副本与相框画布，保留原尺寸；临时空间约为源像素数 × 8 字节。X-Trans、浮点、多平面、旋转传感器等未确认布局仍走保守整图路径。
+- 渐进式 JPEG 仍需全尺寸系数缓冲，计入内存预算；其他未支持磁盘缓存的输入仍需整图处理；HEIF 直接接收编辑条带，超过 1024px 的输出使用 1024×1024 HEIF grid 图块逐个编码，仅保留一条 RGB8 带和当前图块；小图使用单平面。已压缩图块仍由 libheif 暂存，预算计入输出像素数 × 8 字节、行带、编码器工作区及固定余量，并非恒定内存或无限大图支持。预算不足时会报告预计内存和当前预算，不承诺所有设备都能处理所有中画幅 RAW。HEIF 网格编码要求 libheif ≥1.19.7（本轮待用户构建验证）。
 
 无需设置 `PHOTO_CORE_MAX_PIXELS`。修改内核后，完整退出应用，再运行 `sh scripts/dev_macos.sh`，或运行 `sh scripts/build_macos.sh --open` 重新打包启动；热重载不会更新已加载的动态库。
 
@@ -203,7 +204,7 @@ flutter analyze
 PHOTO_CORE_LIBRARY="$(pwd)/../build/native/libphoto_core.dylib" flutter test
 ```
 
-八套 LUT（含「寒峻 · 试用」）可用 python3 scripts/generate_luts.py 确定性重新生成。
+十七套 LUT 可用 `python3 scripts/generate_luts.py` 确定性重新生成；`--styles` 可只生成指定配方。新增「胶片灵感」「经典影调」「自然色彩」六款试用，参考富士、徕卡与哈苏公开视觉特点，属于独立风格模拟；不是官方配方或 HNCS。默认配置、参考来源与单独生成命令见 [滤镜清单](docs/滤镜清单.md)，原有十一款配方与 LUT 保留。
 
 高级调整顺序：十项基础调色 → HSL → SDR 五点折线主曲线 → 分离色调 → 局部明度/色彩降噪与锐化 → LUT → 边框。高级参数随配方保存，默认无效果；旧版预设缺少高级字段时按默认值读取。锐化半径为当前图像的像素单位，因此缩略预览不代替原尺寸细节判断。
 
@@ -247,3 +248,14 @@ sh scripts/build_macos.sh --verify --open
 分析使用手动调色之前的默认解码画面，避免自适应追着用户滑杆反向补偿；风格补偿、LUT、材质感、暗角与颗粒在手动调色之后组合，并整体混合。RAW 与 JPEG 的颜色起点不同，预览缩放也会影响采样，不能承诺不同文件、不同分辨率之间逐像素相同。
 
 原尺寸 JPEG 分条导出从磁盘像素缓存采样一次，所有条带共享分析结果；局部效果累加足够的邻域，暗角/确定性颗粒使用整幅照片坐标。选项随完整编辑预设保存，独立边框预设不覆盖它们。本轮未运行编译、自动化测试或效果验收，需重编译内核与应用后试用。
+
+## 相框分类与分享卡片
+
+「相框」面板包含留白、摄影、胶片、社交卡片四类，选择类型后显示对应设置。胶片支持两侧/上下齿孔、胶片文字、编号和日期；社交卡片提供 Instagram、Facebook、X、微信朋友圈的单照片排版，支持头像、昵称、地点、换行配文、时间与互动信息。照片保留原比例，所有内容合成为导出图片，切换类型保留调色及填写的内容。
+
+新增模板接入原片对比、撤销重做、相框预设及原尺寸整图/分条导出。默认无衬线模板会自动为中文使用内置 Noto Sans SC，其他字体可在相框中选择。此功能不连接社交账号。内核有新增 C API，使用前需执行 `sh scripts/build_macos.sh --open` 重编译并完整重启应用。
+
+
+### TIFF 输入（2026-10-22，待用户构建测试）
+
+新增普通 TIFF / BigTIFF 照片读取，支持 8/16 位整数 RGB/RGBA、灰度、条带/图块、交错/分平面、ICC 与 EXIF 方向。默认 RAW 路径仍由 LibRaw 识别，避免把 DNG、NEF 等 TIFF 容器里的 RGB 预览当原图。TIFF 预览缩小采样，原尺寸导出复用磁盘像素缓存及分条编辑，支持现有滤镜、相框及 JPEG/PNG/HEIF 输出。CMYK、浮点/HDR 等未支持布局会单独提示，当前不提供 TIFF 输出。详情及回归命令见 [构建环境与命令](docs/构建环境与命令.md)。此改动需要重新编译内核；本轮未运行编译和测试。

@@ -9,6 +9,7 @@ case "$mode" in
   *) echo "Unknown iOS mode: $mode" >&2; exit 2;;
 esac
 sh scripts/check_toolchains.sh ios
+python3 scripts/validate_luts.py
 sh scripts/build_ios_core.sh
 cd app
 flutter pub get

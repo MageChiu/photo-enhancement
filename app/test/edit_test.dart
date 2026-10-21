@@ -1,10 +1,45 @@
 import 'dart:convert';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:photo_enhancement/models/edit.dart';
+import 'package:photo_enhancement/models/frame_template.dart';
 import 'package:photo_enhancement/editor_controller.dart';
 import 'package:photo_enhancement/services/presets.dart';
 
 void main() {
+  test(
+      'template content roundtrips, frame application preserves colour, history restores type',
+      () {
+    final template = FrameTemplate(
+        category: 'social',
+        variant: 3,
+        filmVariant: 1,
+        title: '摄影师',
+        body: '午后的海边\n散步',
+        showActions: false);
+    final recipe = EditRecipe(template: template).control(0, .6);
+    expect(EditRecipe.fromJson(recipe.toJson()), recipe);
+    final applied = recipe
+        .withFrame(EditRecipe(template: template.copyWith(category: 'film')));
+    expect(applied.values[0], .6);
+    expect(applied.template.title, '摄影师');
+    final history = EditHistory()..reset(recipe);
+    history.commit(applied);
+    history.undo();
+    expect(history.current.template.category, 'social');
+    history.redo();
+    expect(history.current.template.filmVariant, 1);
+    final old = recipe.toJson()..remove('frameTemplate');
+    expect(EditRecipe.fromJson(old).template.category, 'photo');
+    for (final value in [
+      {'category': 'unknown'},
+      {'variant': 4},
+      {'showAvatar': 1},
+      {'body': '中' * 400}
+    ]) {
+      final invalid = recipe.toJson()..['frameTemplate'] = value;
+      expect(() => EditRecipe.fromJson(invalid), throwsFormatException);
+    }
+  });
   test(
       'adaptive style controls roundtrip without affecting frame-only application',
       () {

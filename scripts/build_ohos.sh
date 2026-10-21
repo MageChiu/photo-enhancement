@@ -8,6 +8,7 @@ case "${1:-}" in
   *) echo "Unknown option: $1" >&2; exit 2;;
 esac
 sh scripts/check_toolchains.sh ohos
+python3 scripts/validate_luts.py
 : "${OHOS_FLUTTER:?Set OHOS_FLUTTER to the ohos Flutter executable}"
 : "${OHOS_SDK_NATIVE:?Set OHOS_SDK_NATIVE to the SDK native directory}"
 toolchain="$OHOS_SDK_NATIVE/build/cmake/ohos.toolchain.cmake"

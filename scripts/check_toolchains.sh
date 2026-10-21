@@ -29,7 +29,7 @@ fi
 if [ "$target" = macos ] || [ "$target" = all ]; then
   need_command pkg-config
   if command -v pkg-config >/dev/null 2>&1; then
-    for package in libjpeg libpng lcms2 freetype2; do
+    for package in libjpeg libpng libtiff-4 lcms2 freetype2; do
       if pkg-config --exists "$package"; then printf 'OK   %s\n' "$package";
       else printf 'MISS Homebrew dependency: %s\n' "$package" >&2; missing=1; fi
     done
@@ -41,7 +41,12 @@ fi
 if [ "$target" = android ] || [ "$target" = all ]; then
   need_command java
   task_android_sdk=${ANDROID_HOME:-${ANDROID_SDK_ROOT:-$HOME/Library/Android/sdk}}
-  need_file "$task_android_sdk/cmdline-tools/latest/bin/sdkmanager"
+  # setup-android uses a versioned cmdline-tools directory, not always latest/.
+  if [ -f "$task_android_sdk/cmdline-tools/latest/bin/sdkmanager" ]; then
+    need_file "$task_android_sdk/cmdline-tools/latest/bin/sdkmanager"
+  else
+    need_command sdkmanager
+  fi
   need_file "$task_android_sdk/platforms/android-36/android.jar"
   need_file "$task_android_sdk/build-tools/36.0.0/aapt2"
   need_file "$task_android_sdk/cmake/3.22.1/bin/cmake"

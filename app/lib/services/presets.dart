@@ -3,6 +3,7 @@ import 'dart:io';
 import 'package:crypto/crypto.dart';
 import 'package:flutter/services.dart';
 import 'platform_files.dart';
+import 'bundled_assets.dart';
 import '../models/edit.dart';
 
 class PhotoPreset {
@@ -24,12 +25,12 @@ class PresetStore {
     final manifest =
         jsonDecode(await rootBundle.loadString('assets/presets/builtin.json'))
             as List;
+    final assets = <String, File>{};
     for (final dynamic item in manifest) {
       final spec = Map<String, dynamic>.from(item as Map);
       final lut = spec['lut'] as String;
       final file = File('${directory.path}/builtin-$lut');
-      await file.writeAsString(await rootBundle.loadString('assets/luts/$lut'),
-          flush: true);
+      assets['assets/luts/$lut'] = file;
       final recipe =
           EditRecipe.fromJson(Map<String, dynamic>.from(spec['recipe'] as Map));
       presets.add(PhotoPreset(
@@ -39,6 +40,7 @@ class PresetStore {
           group: spec['group'] as String? ?? '基础纪实',
           colorOnly: true));
     }
+    await installBundledAssets(assets);
     await for (final entry in directory.list()) {
       if (entry is File && entry.path.endsWith('.preset.json')) {
         try {
@@ -106,6 +108,17 @@ class PresetStore {
         EditRecipe.fromJson(Map<String, dynamic>.from(decoded['recipe'] as Map))
             .copyWith(
                 clearLut: true, fontPath: '', logoPath: '', accentPath: '');
+    recipe =
+        recipe.copyWith(template: recipe.template.copyWith(avatarPath: ''));
+    final avatar = decoded['avatar'];
+    if (avatar != null) {
+      if (avatar is! String || avatar.length > 6 * 1024 * 1024) {
+        throw const FormatException('头像数据无效');
+      }
+      final path = await cacheLogo(base64Decode(avatar));
+      recipe =
+          recipe.copyWith(template: recipe.template.copyWith(avatarPath: path));
+    }
     if (recipe.frameFont == 'custom') {
       recipe = recipe.copyWith(frameFont: 'sans');
     }
@@ -137,7 +150,21 @@ class PresetStore {
     }
     if (frameOnly) recipe = EditRecipe().withFrame(recipe);
     final portable = recipe.copyWith(
-        clearLut: true, fontPath: '', logoPath: '', accentPath: '');
+        clearLut: true,
+        fontPath: '',
+        logoPath: '',
+        accentPath: '',
+        template: recipe.template.copyWith(avatarPath: ''));
+    String? avatar;
+    if (recipe.template.avatarPath.isNotEmpty) {
+      final file = File(recipe.template.avatarPath);
+      if (await file.length() > 4 * 1024 * 1024) {
+        throw const FormatException('头像不能超过 4MB');
+      }
+      final bytes = await file.readAsBytes();
+      validateLogo(bytes);
+      avatar = base64Encode(bytes);
+    }
     String? cube;
     if (recipe.lutPath != null) {
       final file = File(recipe.lutPath!);
@@ -160,6 +187,7 @@ class PresetStore {
       'kind': frameOnly ? 'frame' : 'edit',
       'recipe': portable.toJson(),
       'cube': cube,
+      'avatar': avatar,
       'logo': logo
     });
     if (utf8.encode(serialized).length > 24 * 1024 * 1024) {

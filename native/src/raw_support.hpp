@@ -3,6 +3,12 @@
 #include <cstdint>
 
 namespace pe {
+// Standard integer Bayer RAW: unpack scratch is conservatively charged at
+// 16 bytes/sensor pixel. AHD uses a bounded tile; retain sensor/correction
+// buffers plus RGBG16 during processing, then write one RGBA16 row to disk.
+inline uint64_t raw_disk_memory(uint64_t sensor, uint64_t pixels) {
+  return std::max(sensor * 16, sensor * 4 + pixels * 8) + 64ULL * 1024 * 1024;
+}
 // Only for integer, single-plane CFA RAW with confirmed half_size processing.
 // This is a conservative stage estimate, not a promise about a decoder's RSS.
 // Dimensions are structurally checked by the caller before using this helper.
@@ -11,13 +17,16 @@ struct RawPreviewMemory {
   uint64_t peak() const { return std::max({unpack, process, output}); }
 };
 inline RawPreviewMemory raw_preview_memory(uint32_t sensor_width, uint32_t sensor_height,
-                                          uint32_t width, uint32_t height) {
+                                          uint32_t width, uint32_t height,
+                                          bool bounded_unpack = false) {
   const uint64_t sensor = uint64_t(sensor_width) * sensor_height;
   const uint64_t work = ((uint64_t(width) + 1) / 2) * ((uint64_t(height) + 1) / 2);
   constexpr uint64_t reserve = 64ULL * 1024 * 1024;
   return {
     // Full sensor samples + decoder scratch; half_size never avoids unpack().
-    sensor * 16 + reserve,
+    // Audited row/block decoders need sensor samples and bounded scratch,
+    // while unknown decoders keep the conservative unpack multiplier.
+    sensor * (bounded_unpack ? 4 : 16) + reserve,
     // Retained sensor/correction buffers + half-size RGBA and processing scratch.
     sensor * 4 + work * 32 + reserve,
     // LibRaw's half-size image + our RGBA16 output, without an RGB16 bitmap copy.

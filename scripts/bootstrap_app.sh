@@ -4,6 +4,7 @@ set -eu
 cd "$(dirname "$0")/.."
 command -v flutter >/dev/null 2>&1 || { echo 'Flutter SDK is required (see app/.fvmrc and README).' >&2; exit 1; }
 python3 scripts/generate_luts.py
+python3 scripts/validate_luts.py
 template="build/flutter_runner_template"
 if [ ! -d "$template/macos" ]; then
   flutter create --no-pub --platforms=macos,ios,android --org=local.photo --project-name=photo_enhancement "$template"

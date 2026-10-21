@@ -18,6 +18,7 @@ for target in iphoneos-arm64 iphonesimulator-arm64 iphonesimulator-x86_64; do
     "$output/libphoto_core.a" "$output/libpe_raw.a" \
     "$output/_deps/pe_jpeg-build/libjpeg.a" \
     "$output/_deps/pe_png-build/libpng16.a" \
+    "$output/_deps/pe_tiff-build/libtiff/libtiff.a" \
     "$output/_deps/pe_zlib-build/libz.a" \
     "$output/libpe_lcms2.a" "$output/_deps/pe_freetype-build/libfreetype.a" \
     "$output/_deps/pe_webp-build/libwebp.a" \
