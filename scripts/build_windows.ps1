@@ -6,6 +6,9 @@ param(
 $ErrorActionPreference = 'Stop'
 Set-StrictMode -Version Latest
 if (-not $IsWindows) { throw 'Build this application on Windows x64 with Visual Studio 2022.' }
+if ([System.Runtime.InteropServices.RuntimeInformation]::OSArchitecture -ne [System.Runtime.InteropServices.Architecture]::X64) {
+    throw 'Use an x64 Windows host: this Flutter version selects the Windows target architecture from its host.'
+}
 $root = Split-Path $PSScriptRoot -Parent
 Set-Location $root
 function Invoke-Checked {
@@ -25,7 +28,8 @@ Invoke-Checked cmake @('--build', $native, '--config', 'Release', '--target', 'p
 Push-Location app
 try {
     Invoke-Checked flutter @('pub', 'get')
-    Invoke-Checked flutter @('build', 'windows', '--release', '--target-platform', 'windows-x64')
+    # Flutter 3.47.7 selects Windows x64 on an x64 host; it has no --target-platform option.
+    Invoke-Checked flutter @('build', 'windows', '--release', '--no-pub')
 } finally { Pop-Location }
 # Install rules in app/windows copy the core and all shared codec dependencies.
 foreach ($required in @('photo_enhancement.exe', 'photo_core.dll', 'flutter_windows.dll', 'data/flutter_assets')) {
@@ -63,7 +67,19 @@ $version = "$($Matches[1]).$($Matches[2]).$($Matches[3])"
 if ([int]$Matches[1] -gt 255 -or [int]$Matches[2] -gt 255 -or [int]$Matches[3] -gt 65535) {
     throw 'Application version exceeds Windows Installer version limits'
 }
-Invoke-Checked cmake @('-S', 'platform/windows', '-B', 'build/windows-installer', "-DPE_APP_DIR=$bundle", "-DPE_APP_VERSION=$version")
-Invoke-Checked cpack @('--config', 'build/windows-installer/CPackConfig.cmake', '-G', 'WIX', '-B', $artifacts)
+$cmakeBundle = $bundle.Replace('\', '/')
+Invoke-Checked cmake @('-S', 'platform/windows', '-B', 'build/windows-installer', "-DPE_APP_DIR:PATH=$cmakeBundle", "-DPE_APP_VERSION=$version")
+try {
+    Invoke-Checked cpack @('--config', 'build/windows-installer/CPackConfig.cmake', '-G', 'WIX', '-B', $artifacts)
+} catch {
+    # CPack's summary omits the actual WiX compiler/linker error.
+    Get-ChildItem (Join-Path $artifacts '_CPack_Packages') -Filter 'wix.log' -Recurse -ErrorAction SilentlyContinue |
+        ForEach-Object {
+            Write-Host "::group::WiX diagnostics: $($_.FullName)"
+            Get-Content -LiteralPath $_.FullName -ErrorAction Continue | Out-Host
+            Write-Host '::endgroup::'
+        }
+    throw
+}
 Compress-Archive -Path "$bundle/*" -DestinationPath "$artifacts/photo-enhancement-windows-x64.zip" -Force
 Write-Host "Windows application and MSI: $artifacts"

@@ -8,7 +8,7 @@
 
 ## GitHub 自动构建与发布
 
-推送 `dev/dev-v*` 分支运行与 release 相同的 macOS、Windows、Android、iOS 应用构建、打包和发布包校验，但不发布且不额外运行测试；推送 `release-*` 分支生成预发布，推送任意 tag 生成正式 Release。产物包含 macOS 双架构 ZIP / DMG、Windows x64 MSI / ZIP、Android 双 ABI APK、iOS 未签名设备包及模拟器包，以及 SHA256 校验和。鸿蒙暂不参与流水线；上述四端全部成功后才发布。Windows 构建入口已接入，首次 Windows CI 和安装验收尚待实跑，详见 [Windows 构建](docs/Windows构建.md)。配置方法、签名边界及使用示例见 [GitHub 流水线](docs/GitHub流水线.md)。
+推送 `dev/dev-v*` 分支运行与 release 相同的 macOS、Windows、Android、iOS 应用构建、打包和发布包校验，但不发布且不额外运行测试；推送 `release-*` 分支生成预发布，推送任意 tag 生成正式 Release。产物包含 macOS 双架构 ZIP / DMG、Windows x64 MSI / ZIP、Android 双 ABI APK、iOS 未签名设备包及模拟器包，以及 SHA256 校验和。鸿蒙暂不参与流水线；各平台成功后独立发布，一个平台失败不会阻塞其他平台。Windows 构建入口已接入，首次 Windows CI 和安装验收尚待实跑，详见 [Windows 构建](docs/Windows构建.md)。配置方法、签名边界及使用示例见 [GitHub 流水线](docs/GitHub流水线.md)。
 
 ## 获取源码与子模块
 

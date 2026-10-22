@@ -1,0 +1,40 @@
+name: Package and publish one platform
+description: Validate and upload one platform without depending on other builds
+inputs:
+  platform:
+    description: macos-arm64, macos-x86_64, android, ios, or windows-x64
+    required: true
+  python:
+    description: Python 3 executable on this runner
+    default: python3
+runs:
+  using: composite
+  steps:
+    - name: Validate platform packages and generate checksums
+      shell: bash
+      env:
+        RELEASE_PLATFORM: ${{ inputs.platform }}
+        PE_PYTHON: ${{ inputs.python }}
+      run: '"$PE_PYTHON" scripts/prepare_release.py --platform "$RELEASE_PLATFORM"'
+    - uses: actions/upload-artifact@v4
+      with:
+        name: package-${{ inputs.platform }}
+        path: |
+          artifacts/*.zip
+          artifacts/*.dmg
+          artifacts/*.apk
+          artifacts/*.msi
+          artifacts/build-info-${{ inputs.platform }}.json
+          artifacts/SHA256SUMS-${{ inputs.platform }}
+        if-no-files-found: error
+        overwrite: true
+        retention-days: 14
+    - name: Publish this platform to GitHub Release
+      if: github.event_name == 'push' && (github.ref_type == 'tag' || startsWith(github.ref_name, 'release-'))
+      shell: bash
+      env:
+        GH_TOKEN: ${{ github.token }}
+        GH_REPO: ${{ github.repository }}
+        RELEASE_PLATFORM: ${{ inputs.platform }}
+        PE_PYTHON: ${{ inputs.python }}
+      run: bash scripts/publish_release.sh "$RELEASE_PLATFORM"

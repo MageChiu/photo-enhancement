@@ -1,5 +1,8 @@
 cmake_minimum_required(VERSION 3.30)
 project(photo_enhancement_installer NONE)
+# install() embeds this path in generated CMake source, where native Windows
+# backslashes would be interpreted as escapes (for example, D:\a).
+string(REPLACE "\\" "/" PE_APP_DIR "${PE_APP_DIR}")
 if(NOT WIN32 OR NOT IS_DIRECTORY "${PE_APP_DIR}")
   message(FATAL_ERROR "Configure on Windows with -DPE_APP_DIR=<complete Release directory>")
 endif()
@@ -26,6 +29,17 @@ set(CPACK_WIX_ARCHITECTURE x64)
 set(CPACK_WIX_INSTALL_SCOPE perMachine)
 set(CPACK_WIX_ROOT_FOLDER_ID ProgramFiles64Folder)
 set(CPACK_WIX_PROGRAM_MENU_FOLDER "光屿")
+# WiX's default en-US/1252 database cannot represent the Chinese shortcuts.
+# Keep CMake's standard WiX 4 template, overriding only language and code page.
+set(CPACK_WIX_CULTURES "zh-CN")
+file(READ "${CMAKE_ROOT}/Modules/Internal/CPack/WIX.template.in" PE_WIX_TEMPLATE)
+if(NOT PE_WIX_TEMPLATE MATCHES "Language=\"1033\"")
+  message(FATAL_ERROR "CMake WiX template changed; review the installer language/code page override")
+endif()
+string(REPLACE "Language=\"1033\"" "Language=\"2052\" Codepage=\"936\""
+  PE_WIX_TEMPLATE "${PE_WIX_TEMPLATE}")
+set(CPACK_WIX_TEMPLATE "${CMAKE_CURRENT_BINARY_DIR}/WIX.template.in")
+file(WRITE "${CPACK_WIX_TEMPLATE}" "${PE_WIX_TEMPLATE}")
 set(CPACK_RESOURCE_FILE_LICENSE "${CMAKE_CURRENT_SOURCE_DIR}/NOTICE.txt")
 set(CPACK_WIX_PRODUCT_ICON "${CMAKE_CURRENT_SOURCE_DIR}/../../app/windows/runner/resources/app_icon.ico")
 include(CPack)
