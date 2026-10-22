@@ -78,6 +78,29 @@ final class NativeFrameAdjustments extends Struct {
   external Array<Uint8> accentPath;
 }
 
+final class NativeFrameTemplate extends Struct {
+  @Uint32()
+  external int kind;
+  @Uint32()
+  external int variant;
+  @Uint32()
+  external int flags;
+  @Array(128)
+  external Array<Uint8> title;
+  @Array(128)
+  external Array<Uint8> subtitle;
+  @Array(256)
+  external Array<Uint8> location;
+  @Array(1024)
+  external Array<Uint8> body;
+  @Array(256)
+  external Array<Uint8> timestamp;
+  @Array(256)
+  external Array<Uint8> stats;
+  @Array(1024)
+  external Array<Uint8> avatarPath;
+}
+
 final class NativeLensInfo extends Struct {
   @Array(128)
   external Array<Uint8> make;
@@ -288,6 +311,19 @@ class Bindings {
           Pointer<NativeFrame>,
           Pointer<NativeFrameAdjustments>,
           Pointer<Pointer<NativeImage>>)>('pe_add_frame_advanced');
+  late final addFrameTemplate = library.lookupFunction<
+      Int32 Function(
+          Pointer<NativeImage>,
+          Pointer<NativeFrame>,
+          Pointer<NativeFrameAdjustments>,
+          Pointer<NativeFrameTemplate>,
+          Pointer<Pointer<NativeImage>>),
+      int Function(
+          Pointer<NativeImage>,
+          Pointer<NativeFrame>,
+          Pointer<NativeFrameAdjustments>,
+          Pointer<NativeFrameTemplate>,
+          Pointer<Pointer<NativeImage>>)>('pe_add_frame_template');
   late final readLensInfo = library.lookupFunction<
       Int32 Function(Pointer<Utf8>, Uint64, Pointer<NativeLensInfo>),
       int Function(
@@ -426,6 +462,40 @@ class Bindings {
           int,
           int,
           int)>('pe_process_file_advanced');
+
+  late final processFileTemplate = library.lookupFunction<
+      Int32 Function(
+          Pointer<Utf8>,
+          Pointer<Utf8>,
+          Pointer<DecodeOptions>,
+          Pointer<NativeParams>,
+          Pointer<NativeEffects>,
+          Pointer<Utf8>,
+          Double,
+          Pointer<NativeFrame>,
+          Pointer<NativeLook>,
+          Pointer<NativeFrameAdjustments>,
+          Pointer<NativeFrameTemplate>,
+          Int32,
+          Uint32,
+          Uint32,
+          Uint64),
+      int Function(
+          Pointer<Utf8>,
+          Pointer<Utf8>,
+          Pointer<DecodeOptions>,
+          Pointer<NativeParams>,
+          Pointer<NativeEffects>,
+          Pointer<Utf8>,
+          double,
+          Pointer<NativeFrame>,
+          Pointer<NativeLook>,
+          Pointer<NativeFrameAdjustments>,
+          Pointer<NativeFrameTemplate>,
+          int,
+          int,
+          int,
+          int)>('pe_process_file_template');
 
   void check(int status) {
     if (status != 0) {

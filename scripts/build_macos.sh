@@ -17,7 +17,9 @@ for option in "$@"; do
   esac
 done
 sh scripts/bootstrap_app.sh
-cmake -S . -B build/native -DCMAKE_BUILD_TYPE=Release
+if [ "$verify" -eq 1 ]; then build_tests=ON; else build_tests=OFF; fi
+cmake -S . -B build/native -DCMAKE_BUILD_TYPE=Release \
+  -DPE_BUILD_TESTS="$build_tests" -DPE_BUILD_CLI=OFF
 cmake --build build/native --parallel 8
 if [ "$verify" -eq 1 ]; then
   ctest --test-dir build/native --output-on-failure

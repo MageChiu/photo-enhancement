@@ -5,6 +5,7 @@ import 'dart:ui' as ui;
 import 'package:ffi/ffi.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:photo_enhancement/models/edit.dart';
+import 'package:photo_enhancement/models/frame_template.dart';
 import 'package:photo_enhancement/models/frame_marks.dart';
 import 'package:photo_enhancement/native/bindings.dart';
 import 'package:photo_enhancement/native/worker.dart';
@@ -123,6 +124,114 @@ void main() {
     }
   });
 
+  test(
+      'auto lens combinations deduplicate brands and retain series and manual choices',
+      () {
+    final assets = <String, String>{
+      'font:sans': '/font.ttf',
+      for (final id in [
+        'hasselblad',
+        'hasselblad-h',
+        'sony',
+        'sony-alpha',
+        'sony-gm',
+        'sigma',
+        'sigma-art',
+        'nikon',
+        'nikon-s',
+        'fujifilm',
+        'canon',
+        'canon-l'
+      ])
+        'art:$id:2': '/$id.png'
+    };
+    for (final advanced in [false, true]) {
+      for (final camera in ['auto', 'hasselblad', 'hasselblad-h']) {
+        final recipe = EditRecipe(
+            frameMark: camera,
+            frameAccent: 'auto',
+            borderBottom: .2,
+            frameAdvanced: advanced);
+        final resolved = resolveFrameResources(recipe, 'Hasselblad', assets,
+            lensModel: 'XCD 55V');
+        expect(resolved.accentPath, '');
+        expect(resolved.logoPath,
+            camera == 'hasselblad-h' ? '/hasselblad-h.png' : '/hasselblad.png');
+        expect(resolved.framePositions, recipe.framePositions);
+        expect(resolved.frameAdvanced, advanced);
+      }
+    }
+    for (final pair in [
+      ('Canon', 'Canon RF 50mm F1.8', ''),
+      ('Canon', 'Canon RF 50mm F1.2 L', '/canon-l.png'),
+      ('Nikon', 'NIKKOR 50mm', ''),
+      ('Nikon', 'NIKKOR Z 50mm S', '/nikon-s.png'),
+      ('Sony', 'FE 24-70mm F2.8 GM', '/sony-gm.png'),
+      ('Sony', 'SIGMA 35mm Art', '/sigma-art.png')
+    ]) {
+      final resolved = resolveFrameResources(
+          EditRecipe(frameMark: 'auto', frameAccent: 'auto', borderBottom: .2),
+          pair.$1,
+          assets,
+          lensModel: pair.$2);
+      expect(resolved.accentPath, pair.$3);
+    }
+    final manual = resolveFrameResources(
+        EditRecipe(
+            frameMark: 'hasselblad',
+            frameAccent: 'hasselblad',
+            borderBottom: .2),
+        '',
+        assets);
+    expect(manual.accentPath, '/hasselblad.png');
+    final lensOnly = resolveFrameResources(
+        EditRecipe(frameMark: '', frameAccent: 'auto', borderBottom: .2),
+        'Hasselblad',
+        assets,
+        lensModel: 'XCD 55V');
+    expect(lensOnly.logoPath, '');
+    expect(lensOnly.accentPath, '/hasselblad.png');
+    final unknown = resolveFrameResources(
+        EditRecipe(
+            frameMark: 'auto',
+            frameAccent: 'auto',
+            logoPath: '/old.png',
+            accentPath: '/old-accent.png',
+            borderBottom: .2),
+        'Unknown',
+        assets);
+    expect(unknown.logoPath, '');
+    expect(unknown.accentPath, '');
+  });
+
+  test('optional lens name is portable and does not mutate the user caption',
+      () {
+    final recipe = EditRecipe(
+        frameLensName: true,
+        borderBottom: .2,
+        caption: 'My caption',
+        frameFields: 31);
+    expect(EditRecipe.fromJson(recipe.toJson()), recipe);
+    expect(EditRecipe().withFrame(recipe).frameLensName, isTrue);
+    final assets = {'font:sans': '/font.ttf'};
+    final resolved =
+        resolveFrameResources(recipe, '', assets, lensModel: 'XCD 55V');
+    expect(resolved.caption, 'XCD 55V');
+    expect(resolved.frameFields & 64, 64);
+    expect(recipe.caption, 'My caption');
+    expect(
+        resolveFrameResources(recipe.copyWith(frameFields: 95), '', assets,
+                lensModel: 'XCD 55V')
+            .caption,
+        'XCD 55V · My caption');
+    expect(resolveFrameResources(recipe, '', assets).caption, 'My caption');
+    final old = recipe.toJson();
+    (old['border'] as Map).remove('lensName');
+    expect(EditRecipe.fromJson(old).frameLensName, isFalse);
+    (old['border'] as Map)['lensName'] = 'yes';
+    expect(() => EditRecipe.fromJson(old), throwsFormatException);
+  });
+
   test('advanced placement is portable, bounded and preserves colour edits',
       () {
     final positions = List<double>.of(defaultFramePositions)..[0] = .8;
@@ -226,8 +335,24 @@ void main() {
             native.freeImage(out.value);
           }
         });
-        for (var layout = 0; layout < 6; ++layout) {
+        for (var layout = 0; layout < 13; ++layout) {
+          final template = layout < 6
+              ? const FrameTemplate()
+              : layout == 12
+                  ? const FrameTemplate(category: 'plain')
+                  : FrameTemplate(
+                      category: layout < 8 ? 'film' : 'social',
+                      filmVariant: layout == 7 ? 1 : 0,
+                      variant: layout < 8 ? 0 : layout - 8,
+                      title: '光屿摄影',
+                      body: '午后的海边，留住风和光。\n第二段配文。',
+                      location: '海边',
+                      timestamp: '2026-10-21',
+                      stats: '128 likes',
+                      avatarPath: resources.paths['art:leica:1']!);
           final selected = recipe.copyWith(
+              template: template,
+              frameFont: layout >= 6 ? 'sans' : 'mono',
               frameLayout: layout % 3,
               frameAdvanced: layout >= 3,
               framePositions: defaultFramePositions,
@@ -237,6 +362,11 @@ void main() {
             'recipe': selected.toJson(),
             'frameAssets': resources.paths
           });
+          expect(
+              (result['originalPixels'] as TransferableTypedData)
+                  .materialize()
+                  .lengthInBytes,
+              (result['width'] as int) * (result['height'] as int) * 4);
           final pixels = (result['pixels'] as TransferableTypedData)
               .materialize()
               .asUint8List();

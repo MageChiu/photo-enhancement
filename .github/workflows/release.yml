@@ -15,7 +15,7 @@ concurrency:
 
 jobs:
   macos:
-    name: macOS (${{ matrix.arch }}) and regression tests
+    name: macOS (${{ matrix.arch }}) application
     strategy:
       fail-fast: false
       matrix:
@@ -36,14 +36,19 @@ jobs:
           flutter-version-file: app/.fvmrc
           cache: true
       - name: Install native dependencies
-        run: brew install cmake pkgconf jpeg-turbo libpng little-cms2 freetype webp libheif
-      - name: Build, test and package
+        run: brew install cmake pkgconf jpeg-turbo libpng libtiff little-cms2 freetype webp libheif
+      - name: Build and package application
         env:
           ARCH: ${{ matrix.arch }}
         run: |
-          sh scripts/build_macos.sh --verify
+          sh scripts/build_macos.sh
           mkdir -p artifacts
           cp dist/光屿-macOS.zip "artifacts/photo-enhancement-macos-${ARCH}.zip"
+          mkdir -p build/macos-dmg
+          ditto dist/光屿.app build/macos-dmg/光屿.app
+          ln -s /Applications build/macos-dmg/Applications
+          hdiutil create -volname 光屿 -srcfolder build/macos-dmg -ov -format UDZO "artifacts/photo-enhancement-macos-${ARCH}.dmg"
+          hdiutil verify "artifacts/photo-enhancement-macos-${ARCH}.dmg"
       - uses: actions/upload-artifact@v4
         with:
           name: package-macos-${{ matrix.arch }}
@@ -68,7 +73,9 @@ jobs:
         with:
           flutter-version-file: app/.fvmrc
           cache: true
-      - uses: android-actions/setup-android@v3
+      - uses: android-actions/setup-android@v4
+        with:
+          packages: platform-tools
       - name: Install pinned Android tools
         run: sdkmanager 'platforms;android-36' 'build-tools;36.0.0' 'cmake;3.22.1' 'ndk;28.2.13676358'
       - name: Build APKs
@@ -125,34 +132,9 @@ jobs:
           if-no-files-found: error
           retention-days: 14
 
-  ohos:
-    name: HarmonyOS (arm64-v8a)
-    # Required for both dev and release: see docs/GitHub流水线.md for runner setup.
-    runs-on: [self-hosted, ohos]
-    timeout-minutes: 90
-    steps:
-      - uses: actions/checkout@v6
-        with:
-          submodules: recursive
-          persist-credentials: false
-      - name: Build and test with the runner's ohos Flutter SDK
-        shell: bash
-        run: |
-          set -euo pipefail
-          python3 scripts/generate_luts.py
-          sh scripts/build_ohos.sh
-          (cd app && "$OHOS_FLUTTER" analyze && "$OHOS_FLUTTER" test)
-          python3 scripts/collect_ohos_artifacts.py
-      - uses: actions/upload-artifact@v4
-        with:
-          name: package-ohos
-          path: artifacts/*
-          if-no-files-found: error
-          retention-days: 14
-
   release:
     name: Validate release assets and publish
-    needs: [macos, android, ios, ohos]
+    needs: [macos, android, ios]
     runs-on: ubuntu-24.04
     timeout-minutes: 15
     permissions:

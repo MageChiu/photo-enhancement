@@ -1,5 +1,6 @@
 import 'dart:convert';
 import 'frame_marks.dart';
+import 'frame_template.dart';
 
 const defaultFramePositions = <double>[
   .14,
@@ -112,15 +113,18 @@ class EditRecipe {
     this.markTone = 0,
     this.frameFont = 'sans',
     this.frameAdvanced = false,
+    this.frameLensName = false,
     List<double>? framePositions,
     this.frameInfoAlign = 2,
     this.frameCaptionAlign = 2,
     this.accentPath = '',
+    this.template = const FrameTemplate(),
   })  : framePositions =
             List.unmodifiable(framePositions ?? defaultFramePositions),
         values = List.unmodifiable(values ?? List<double>.filled(10, 0)),
         effects = List.unmodifiable(effects ?? defaultEffects);
 
+  final FrameTemplate template;
   final List<double> values;
   final List<double> effects;
   bool get hasEffects {
@@ -136,7 +140,7 @@ class EditRecipe {
   final int borderColor;
   final String caption, fontPath, logoPath;
   final String frameMark, frameAccent, frameFont, accentPath;
-  final bool frameAdvanced;
+  final bool frameAdvanced, frameLensName;
   final List<double> framePositions;
   final int frameInfoAlign, frameCaptionAlign;
   final int markTone;
@@ -171,10 +175,12 @@ class EditRecipe {
     int? markTone,
     String? frameFont,
     bool? frameAdvanced,
+    bool? frameLensName,
     List<double>? framePositions,
     int? frameInfoAlign,
     int? frameCaptionAlign,
     String? accentPath,
+    FrameTemplate? template,
   }) =>
       EditRecipe(
         values: values ?? this.values,
@@ -202,10 +208,12 @@ class EditRecipe {
         markTone: markTone ?? this.markTone,
         frameFont: frameFont ?? this.frameFont,
         frameAdvanced: frameAdvanced ?? this.frameAdvanced,
+        frameLensName: frameLensName ?? this.frameLensName,
         framePositions: framePositions ?? this.framePositions,
         frameInfoAlign: frameInfoAlign ?? this.frameInfoAlign,
         frameCaptionAlign: frameCaptionAlign ?? this.frameCaptionAlign,
         accentPath: accentPath ?? this.accentPath,
+        template: template ?? this.template,
       );
 
   EditRecipe withFrame(EditRecipe frame) => copyWith(
@@ -223,10 +231,12 @@ class EditRecipe {
       markTone: frame.markTone,
       frameFont: frame.frameFont,
       frameAdvanced: frame.frameAdvanced,
+      frameLensName: frame.frameLensName,
       framePositions: frame.framePositions,
       frameInfoAlign: frame.frameInfoAlign,
       frameCaptionAlign: frame.frameCaptionAlign,
-      accentPath: frame.accentPath);
+      accentPath: frame.accentPath,
+      template: frame.template);
 
   EditRecipe control(int index, double value) {
     final updated = List<double>.of(values)..[index] = value;
@@ -235,6 +245,7 @@ class EditRecipe {
 
   Map<String, Object?> toJson() => {
         'version': 1,
+        'frameTemplate': template.toJson(),
         'params': {for (var i = 0; i < 10; ++i) controlNames[i]: values[i]},
         'effects': effects,
         'lutPath': lutPath,
@@ -263,6 +274,7 @@ class EditRecipe {
           'markTone': markTone,
           'font': frameFont,
           'advanced': frameAdvanced,
+          'lensName': frameLensName,
           'positions': framePositions,
           'infoAlign': frameInfoAlign,
           'captionAlign': frameCaptionAlign,
@@ -342,7 +354,8 @@ class EditRecipe {
       throw const FormatException('风格选项无效');
     }
     final positions = border['positions'];
-    if ((border['advanced'] != null && border['advanced'] is! bool) ||
+    if ((border['lensName'] != null && border['lensName'] is! bool) ||
+        (border['advanced'] != null && border['advanced'] is! bool) ||
         (positions != null && (positions is! List || positions.length != 13))) {
       throw const FormatException('高级排版参数无效');
     }
@@ -361,6 +374,7 @@ class EditRecipe {
           defaultFramePositions[i]));
     }
     return EditRecipe(
+      template: FrameTemplate.fromJson(json['frameTemplate']),
       effects: parsedEffects,
       values: [
         for (var i = 0; i < 10; ++i)
@@ -387,14 +401,15 @@ class EditRecipe {
       logoPath: string(border['logoPath'], 1024),
       accentPath: string(border['accentPath'], 1024),
       frameAdvanced: border['advanced'] as bool? ?? false,
+      frameLensName: border['lensName'] as bool? ?? false,
       framePositions: parsedPositions,
       frameInfoAlign: option(border['infoAlign'], 2, 2),
       frameCaptionAlign: option(border['captionAlign'], 2, 2),
       frameMark: choice(border['mark'], frameMarks.keys.toList(), ''),
       frameAccent: choice(border['accent'], frameAccents.keys.toList(), ''),
       markTone: option(border['markTone'], 3, 0),
-      frameFont:
-          choice(border['font'], ['sans', 'mono', 'serif', 'custom'], 'custom'),
+      frameFont: choice(
+          border['font'], ['sans', 'mono', 'serif', 'cjk', 'custom'], 'custom'),
     );
   }
 

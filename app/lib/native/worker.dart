@@ -152,7 +152,7 @@ void _entry(List<Object?> startup) {
           _fillFrame(border.ref, recipe);
           final look = arena<NativeLook>();
           _fillLook(look.ref, recipe);
-          native.check(native.processFileAdvanced(
+          native.check(native.processFileTemplate(
               path.toNativeUtf8(allocator: arena),
               (message['destination'] as String).toNativeUtf8(allocator: arena),
               options,
@@ -163,6 +163,7 @@ void _entry(List<Object?> startup) {
               border,
               look,
               _adjustments(arena, recipe),
+              _template(arena, recipe),
               message['format'] as int,
               message['quality'] as int,
               message['metadata'] == true ? 1 : 0,
@@ -346,8 +347,8 @@ Pointer<NativeImage> _frame(
       final frame = arena<NativeFrame>();
       _fillFrame(frame.ref, recipe);
       final out = arena<Pointer<NativeImage>>();
-      native.check(native.addFrameAdvanced(
-          image, frame, _adjustments(arena, recipe), out));
+      native.check(native.addFrameTemplate(image, frame,
+          _adjustments(arena, recipe), _template(arena, recipe), out));
       return out.value;
     });
 
@@ -366,7 +367,7 @@ Pointer<NativeFrameAdjustments> _adjustments(Arena arena, EditRecipe recipe) {
 void _fillFrame(NativeFrame frame, EditRecipe recipe) {
   final b = frame.border;
   b.width = recipe.borderWidth;
-  b.bottom = recipe.borderBottom;
+  b.bottom = recipe.template.category == 'plain' ? 0 : recipe.borderBottom;
   b.color = recipe.borderColor;
   writeText(b.text, 512, recipe.caption);
   writeText(b.fontPath, 1024, recipe.fontPath);
@@ -374,6 +375,28 @@ void _fillFrame(NativeFrame frame, EditRecipe recipe) {
   frame.layout = recipe.frameLayout;
   frame.brand = recipe.frameBrand;
   writeText(frame.logoPath, 1024, recipe.logoPath);
+}
+
+Pointer<NativeFrameTemplate> _template(Arena arena, EditRecipe recipe) {
+  final out = arena<NativeFrameTemplate>();
+  final t = recipe.template;
+  out.ref.kind = t.category == 'film'
+      ? 1
+      : t.category == 'social'
+          ? 2
+          : 0;
+  out.ref.variant = t.category == 'film' ? t.filmVariant : t.variant;
+  out.ref.flags =
+      (t.holes ? 1 : 0) | (t.showAvatar ? 2 : 0) | (t.showActions ? 4 : 0);
+  writeText(out.ref.title, 128, t.category == 'film' ? t.filmLabel : t.title);
+  writeText(
+      out.ref.subtitle, 128, t.category == 'film' ? t.frameNumber : t.account);
+  writeText(out.ref.location, 256, t.location);
+  writeText(out.ref.body, 1024, t.body);
+  writeText(out.ref.timestamp, 256, t.timestamp);
+  writeText(out.ref.stats, 256, t.stats);
+  writeText(out.ref.avatarPath, 1024, t.avatarPath);
+  return out;
 }
 
 void _fillLook(NativeLook look, EditRecipe recipe) {

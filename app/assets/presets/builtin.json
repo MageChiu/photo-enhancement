@@ -20,6 +20,186 @@
     "id": "hanjun"
   },
   {
+    "name": "冷钢 · 试用",
+    "description": "钢蓝暗部与中性银白高光，低饱和、干净冷硬；适合建筑与工业题材",
+    "group": "冷峻纪实",
+    "lut": "cold_steel.cube",
+    "recipe": {
+      "version": 1,
+      "params": {},
+      "strength": 0.85,
+      "look": {
+        "kind": 1,
+        "adaptive": true,
+        "adaptation": 0.4,
+        "texture": 0.3,
+        "vignette": 0.12,
+        "grain": 0
+      }
+    },
+    "id": "cold_steel"
+  },
+  {
+    "name": "暗红 · 试用",
+    "description": "压低杂色，保留深红与暗金；默认保留现场暖光，适合红墙、舞台与夜景",
+    "group": "冷峻纪实",
+    "lut": "dark_red.cube",
+    "recipe": {
+      "version": 1,
+      "params": {},
+      "strength": 0.9,
+      "look": {
+        "kind": 1,
+        "adaptive": false,
+        "adaptation": 0.35,
+        "texture": 0.3,
+        "vignette": 0.25,
+        "grain": 0
+      }
+    },
+    "id": "dark_red"
+  },
+  {
+    "name": "灰烬 · 试用",
+    "description": "近黑白、分明层次与粗粝颗粒，少量残留色彩；适合街头与旧建筑",
+    "group": "冷峻纪实",
+    "lut": "ash.cube",
+    "recipe": {
+      "version": 1,
+      "params": {},
+      "strength": 0.96,
+      "look": {
+        "kind": 1,
+        "adaptive": false,
+        "adaptation": 0.3,
+        "texture": 0.55,
+        "vignette": 0.2,
+        "grain": 0.24
+      }
+    },
+    "id": "ash"
+  },
+  {
+    "id": "classic_negative",
+    "name": "经典负片 · 试用",
+    "description": "参考富士 CLASSIC Neg.：青绿暗部、偏洋红亮部与负片色彩反差；独立风格模拟",
+    "group": "胶片灵感",
+    "lut": "classic_negative.cube",
+    "recipe": {
+      "version": 1,
+      "params": {},
+      "strength": 0.85,
+      "look": {
+        "kind": 1,
+        "adaptive": false,
+        "adaptation": 0.35,
+        "texture": 0.18,
+        "vignette": 0.1,
+        "grain": 0.08
+      }
+    }
+  },
+  {
+    "id": "classic_cinema",
+    "name": "经典影院 · 试用",
+    "description": "参考徕卡 Classic：暖调、柔和饱和度与明暗反差；独立风格模拟",
+    "group": "经典影调",
+    "lut": "classic_cinema.cube",
+    "recipe": {
+      "version": 1,
+      "params": {},
+      "strength": 0.85,
+      "look": {
+        "kind": 1,
+        "adaptive": false,
+        "adaptation": 0.35,
+        "texture": 0.15,
+        "vignette": 0.16,
+        "grain": 0.04
+      }
+    }
+  },
+  {
+    "id": "natural_colour",
+    "name": "自然臻彩 · 试用",
+    "description": "参考哈苏自然色彩理念：中性色与温和层次；独立配方，不是 HNCS",
+    "group": "自然色彩",
+    "lut": "natural_colour.cube",
+    "recipe": {
+      "version": 1,
+      "params": {},
+      "strength": 0.8,
+      "look": {
+        "kind": 1,
+        "adaptive": false,
+        "adaptation": 0.35,
+        "texture": 0.08,
+        "vignette": 0,
+        "grain": 0
+      }
+    }
+  },
+  {
+    "id": "classic_chrome",
+    "name": "经典纪实 · 试用",
+    "description": "参考富士 CLASSIC CHROME：克制色彩与冷阴影，保留纪实层次；独立风格模拟",
+    "group": "胶片灵感",
+    "lut": "classic_chrome.cube",
+    "recipe": {
+      "version": 1,
+      "params": {},
+      "strength": 0.85,
+      "look": {
+        "kind": 1,
+        "adaptive": false,
+        "adaptation": 0.35,
+        "texture": 0.12,
+        "vignette": 0.08,
+        "grain": 0
+      }
+    }
+  },
+  {
+    "id": "silver_mono",
+    "name": "银盐黑白 · 试用",
+    "description": "参考富士 ACROS：柔和灰阶、深黑与银盐颗粒感；独立风格模拟",
+    "group": "胶片灵感",
+    "lut": "silver_mono.cube",
+    "recipe": {
+      "version": 1,
+      "params": {},
+      "strength": 1,
+      "look": {
+        "kind": 1,
+        "adaptive": false,
+        "adaptation": 0.35,
+        "texture": 0.2,
+        "vignette": 0.1,
+        "grain": 0.18
+      }
+    }
+  },
+  {
+    "id": "hard_mono",
+    "name": "硬调黑白 · 试用",
+    "description": "参考徕卡高反差黑白：深黑、明亮高光与清晰层次，颗粒克制；独立风格模拟",
+    "group": "经典影调",
+    "lut": "hard_mono.cube",
+    "recipe": {
+      "version": 1,
+      "params": {},
+      "strength": 1,
+      "look": {
+        "kind": 1,
+        "adaptive": false,
+        "adaptation": 0.35,
+        "texture": 0.3,
+        "vignette": 0.12,
+        "grain": 0.02
+      }
+    }
+  },
+  {
     "name": "现场",
     "description": "中性色彩、清晰层次，适合日常纪实与人物",
     "group": "纪实光影",

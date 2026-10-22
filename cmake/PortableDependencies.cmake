@@ -80,6 +80,33 @@ set(PNG_TOOLS OFF CACHE BOOL "" FORCE)
 FetchContent_MakeAvailable(pe_png)
 add_library(PNG::PNG ALIAS png_static)
 
+# TIFF shares the pinned JPEG/zlib targets; never discover host-only codecs.
+set(tiff_archive "${CMAKE_CURRENT_LIST_DIR}/../build/dependency-archives/tiff.tar.gz")
+if(EXISTS "${tiff_archive}")
+  set(tiff_url "${tiff_archive}")
+else()
+  set(tiff_url "https://download.osgeo.org/libtiff/tiff-4.7.2.tar.gz")
+endif()
+FetchContent_Declare(pe_tiff URL "${tiff_url}"
+  URL_HASH SHA256=672bd7d10aee4606171afb864f3570b83340f6a33e2c186dc0512f7145ffdf6a)
+foreach(feature tiff-tools tiff-tests tiff-contrib tiff-docs tiff-install cxx
+    libdeflate jbig lerc lzma zstd webp old-jpeg jpeg12)
+  set(${feature} OFF CACHE BOOL "" FORCE)
+endforeach()
+set(tiff-static ON CACHE BOOL "" FORCE)
+set(zlib ON CACHE BOOL "" FORCE)
+set(jpeg ON CACHE BOOL "" FORCE)
+set(jpeg-prefer-standard ON CACHE BOOL "" FORCE)
+set(JPEG_FOUND TRUE)
+set(JPEG_LIBRARIES JPEG::JPEG)
+set(JPEG_INCLUDE_DIRS "${pe_jpeg_SOURCE_DIR}/src;${pe_jpeg_BINARY_DIR}")
+# JPEG is built later by ExternalProject. Skip configure-time link probes for
+# these known pinned APIs; TIFF here only needs the ordinary 8-bit JPEG path.
+set(HAVE_JPEGTURBO_DUAL_MODE_8 TRUE CACHE INTERNAL "" FORCE)
+set(HAVE_JPEGTURBO_DUAL_MODE_12 FALSE CACHE INTERNAL "" FORCE)
+FetchContent_MakeAvailable(pe_tiff)
+add_library(TIFF::TIFF ALIAS tiff)
+
 FetchContent_MakeAvailable(pe_lcms)
 file(GLOB lcms_sources CONFIGURE_DEPENDS "${pe_lcms_SOURCE_DIR}/src/*.c")
 add_library(pe_lcms2 STATIC ${lcms_sources})

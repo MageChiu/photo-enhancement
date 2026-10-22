@@ -5,6 +5,7 @@ case "${1:-}" in
   --help|-h) echo 'Usage: sh scripts/build_android.sh [flutter build apk options]'; exit 0;;
 esac
 sh scripts/check_toolchains.sh android
+python3 scripts/validate_luts.py
 cd app
 # Gradle invokes root CMake for each ABI and packages libphoto_core.so.
 flutter pub get

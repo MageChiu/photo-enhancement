@@ -341,6 +341,16 @@ int main() {
         text(dir/"bad.cube",content); pe_lut* lut=nullptr; expect(pe_lut_load((dir/"bad.cube").c_str(),&lut)!=PE_OK && !lut);
       }
     }},
+    {"damaged LUT reports filename and exact row without skipping data", [] {
+      const auto path=dir/"damaged.cube";
+      text(path,std::string("LUT_3D_SIZE 2\n0.0381801 ")+std::string(16,'\0')+"\n");
+      pe_lut* lut=nullptr;
+      expect(pe_lut_load(path.c_str(),&lut)==PE_INVALID_ARGUMENT && !lut);
+      expect(std::strstr(pe_last_error(),"damaged.cube") && std::strstr(pe_last_error(),"第 2 行"));
+      text(path,"LUT_3D_SIZE 2\n0.0381801\n");
+      expect(pe_lut_load(path.c_str(),&lut)==PE_INVALID_ARGUMENT && !lut);
+      expect(std::strstr(pe_last_error(),"damaged.cube") && std::strstr(pe_last_error(),"第 2 行"));
+    }},
     {"border dimensions, pixels and invalid caption", [] {
       auto src=fixture(100,80); pe_border b; pe_default_border(&b); b.width=.1; b.color=0xff0000; pe_image* out=nullptr;
       ok(pe_add_border(src.get(),&b,&out)); Image framed(out,pe_image_free); auto i=info(framed); auto p=pixels(framed);
@@ -417,6 +427,42 @@ int main() {
       auto failed=dir/"broken-strip.png";
       expect(pe_process_file(broken.c_str(),failed.c_str(),&options,&params,&effects,nullptr,1,&border,PE_PNG,95,1,0)!=PE_OK);
       expect(!fs::exists(failed));
+    }},
+    {"film and social templates preserve photo and match full versus strip export", [] {
+      expect(sizeof(pe_frame_template)==3084,"Template ABI size changed");
+      const std::string font=std::string(PE_SOURCE_DIR)+"/app/assets/frame_fonts/cjk.ttf";
+      for(const auto dimensions: {std::pair<uint32_t,uint32_t>{480,320},{320,480}}){
+        auto source=fixture(dimensions.first,dimensions.second);auto input=dir/("template-source-"+std::to_string(dimensions.first)+".jpg");
+        ok(pe_encode(source.get(),input.c_str(),PE_JPEG,95,0));
+        pe_decode_options options;pe_default_decode_options(&options);pe_image* raw=nullptr;
+        ok(pe_decode(input.c_str(),&options,&raw));source.reset(raw);
+        auto avatar=fixture(60,40);const auto avatar_path=dir/"template-avatar.png";if(!fs::exists(avatar_path))ok(pe_encode(avatar.get(),avatar_path.c_str(),PE_PNG,95,0));
+        pe_params params{};pe_effects effects;pe_default_effects(&effects);pe_look look{};
+        pe_frame frame{};pe_default_border(&frame.border);std::strcpy(frame.border.font_path,font.c_str());
+        pe_frame_adjustments adjustments{};
+        for(uint32_t kind=1;kind<=2;++kind)for(uint32_t variant=0;variant<(kind==1?2U:4U);++variant){
+          pe_frame_template t{};t.kind=kind;t.variant=variant;t.flags=7;
+          std::strcpy(t.title,kind==1?"FILM 400":"光屿摄影");std::strcpy(t.subtitle,kind==1?"07":"@photo");
+          std::strcpy(t.body,"午后的海边，留住风和光。A quiet afternoon by the sea. A longer caption wraps around the card.\n第二段配文。");
+          std::strcpy(t.location,"Seaside");std::strcpy(t.timestamp,"2026-10-21");std::strcpy(t.stats,"128 likes");std::strcpy(t.avatar_path,avatar_path.c_str());
+          ok(pe_add_frame_template(source.get(),&frame,&adjustments,&t,&raw));Image expected(raw,pe_image_free);
+          expect(info(expected).width>dimensions.first&&info(expected).height>dimensions.second);
+          const auto label=std::to_string(dimensions.first)+"-"+std::to_string(kind)+"-"+std::to_string(variant);
+          auto streamed=dir/("template-stream-"+label+".png"),reference=dir/("template-full-"+label+".png");
+          ok(pe_encode(expected.get(),reference.c_str(),PE_PNG,95,0));
+          ok(pe_process_file_template(input.c_str(),streamed.c_str(),&options,&params,&effects,nullptr,1,&frame,&look,&adjustments,&t,PE_PNG,95,0,64*1024*1024));
+          ok(pe_decode(streamed.c_str(),&options,&raw));Image actual(raw,pe_image_free);
+          ok(pe_decode(reference.c_str(),&options,&raw));Image decoded_reference(raw,pe_image_free);
+          expect(pixels(actual)==pixels(decoded_reference),"Template strip output differs");
+          // Turning optional decoration off must work with no avatar resource.
+          t.flags=0;std::strcpy(t.avatar_path,"/missing/hidden-avatar.png");
+          ok(pe_add_frame_template(source.get(),&frame,&adjustments,&t,&raw));pe_image_free(raw);
+        }
+        pe_frame_template invalid{};invalid.kind=3;
+        expect(pe_add_frame_template(source.get(),&frame,&adjustments,&invalid,&raw)==PE_INVALID_ARGUMENT&&!raw);
+        invalid.kind=2;std::memset(invalid.body,'a',sizeof(invalid.body));
+        expect(pe_add_frame_template(source.get(),&frame,&adjustments,&invalid,&raw)==PE_INVALID_ARGUMENT&&!raw);
+      }
     }},
     {"frame layouts fields logo and strip export agree", [] {
       expect(sizeof(pe_frame)==2600);

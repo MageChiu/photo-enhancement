@@ -35,7 +35,8 @@ std::unique_ptr<pe_image> render(std::unique_ptr<pe_image> source,const pe_param
 void process_file(const std::string& path,const std::string& destination,const pe_decode_options& input,
     const pe_params& params,const pe_effects& effects,const char* lut_path,double strength,
     const pe_border& border,pe_format format,uint32_t quality,bool metadata,uint64_t requested,
-    const pe_frame* style,const pe_look* look,const pe_frame_adjustments* adjustments){
+    const pe_frame* style,const pe_look* look,const pe_frame_adjustments* adjustments,const pe_frame_template* decoration){
+  if(decoration){validate_template(*decoration);if(!decoration->kind)decoration=nullptr;}
   if(look)validate_look(*look);
   const uint64_t automatic=memory_budget();
   const uint64_t budget=requested?std::min(requested,automatic):automatic;
@@ -44,34 +45,40 @@ void process_file(const std::string& path,const std::string& destination,const p
       "Destination already exists or cannot be inspected: "+destination,PE_IO_ERROR);
   if(style)validate_frame(*style);
   if(adjustments)validate_frame_adjustments(*adjustments);
-  auto logo=style?frame_logo(*style):nullptr;
+  auto avatar=template_avatar(decoration);
+  auto logo=style&&!decoration?frame_logo(*style):nullptr;
   pe_frame accent_frame{};
-  if(adjustments)std::memcpy(accent_frame.logo_path,adjustments->accent_path,sizeof(accent_frame.logo_path));
-  auto accent=adjustments?frame_logo(accent_frame):nullptr;
+  if(adjustments&&!decoration)std::memcpy(accent_frame.logo_path,adjustments->accent_path,sizeof(accent_frame.logo_path));
+  auto accent=adjustments&&!decoration?frame_logo(accent_frame):nullptr;
   if(adjustments && !adjustments->enabled)logo=combined_frame_logo(std::move(logo),accent.get());
   auto probe=probe_image(path,input.max_file_bytes);
   checked_pixels(probe.metadata.info.width,probe.metadata.info.height,input.max_pixels);
   auto info=probe.metadata.info;
   if(probe.metadata.orientation>=5)std::swap(info.width,info.height);
+  auto framed_strip=[&](uint32_t y,uint32_t rows){
+    return decoration?template_strip(info,border,*decoration,avatar.get(),y,rows):border_strip(info,border,y,rows,style,logo.get(),adjustments,accent.get());
+  };
   // Validate recipes before allocating a full image or creating an output.
-  {auto tiny=image(1,1);apply_params(*tiny,params);apply_effects(*tiny,effects);border_strip(info,border,0,1,style,logo.get(),adjustments,accent.get());}
+  {auto tiny=image(1,1);apply_params(*tiny,params);apply_effects(*tiny,effects);framed_strip(0,1);}
   require(std::isfinite(strength)&&strength>=0&&strength<=1,"LUT strength must be in [0,1]");
   std::unique_ptr<pe_lut> lut;
   if(lut_path && *lut_path)lut=load_lut(lut_path);
   require(!look || !look->kind || lut,"A styled look requires its LUT");
-  const uint64_t lut_bytes=(lut?lut->values.size()*sizeof(std::array<double,3>):0)+(logo?logo->pixels.size()*sizeof(uint16_t):0)+(accent?accent->pixels.size()*sizeof(uint16_t):0);
+  const uint64_t lut_bytes=(lut?lut->values.size()*sizeof(std::array<double,3>):0)+(logo?logo->pixels.size()*sizeof(uint16_t):0)+(accent?accent->pixels.size()*sizeof(uint16_t):0)+(avatar?avatar->pixels.size()*sizeof(uint16_t):0);
   const uint32_t edge=std::min(info.width,info.height),pad=uint32_t(std::lround(edge*border.width)),bottom=uint32_t(std::lround(edge*border.bottom));
-  const uint32_t output_width=info.width+pad*2,output_height=info.height+pad*2+bottom;
+  const auto layout=template_canvas(info,border,decoration);
+  const uint32_t output_width=layout.width,output_height=layout.height;
   checked_pixels(output_width,output_height);
-  if(bottom)border_strip(info,border,pad+info.height,1,style,logo.get(),adjustments,accent.get());
+  if(decoration)framed_strip(layout.y+info.height,1);
+  else if(bottom)framed_strip(pad+info.height,1);
 
-  if(probe.jpeg) {
-    // JPEG input goes through bounded strips regardless of the camera's MP.
+  if(probe.jpeg || probe.tiff || probe.raw_disk) {
+    // JPEG/TIFF and supported integer Bayer RAW input use a disk-backed linear raster and bounded edits.
     // Temporary linear pixels also allow EXIF transpose without a full RAM copy.
     // Large HEIF outputs use bounded grid tiles, retaining compressed tile
     // payloads until file writing. Include those payloads in the strip budget.
     const uint64_t heif_memory=format==PE_HEIF?heif_export_memory(output_width,output_height):0;
-    const std::string route="原尺寸导出（JPEG "+std::to_string(info.width)+"x"+
+    const std::string route="原尺寸导出（"+probe.format+" "+std::to_string(info.width)+"x"+
         std::to_string(info.height)+" → HEIF；"+
         (heif_grid(output_width,output_height)?"网格分块编码阶段":"整图 HEIF 编码阶段")+"）";
     if(format==PE_HEIF)require_memory(heif_memory+lut_bytes,budget,route);
@@ -79,27 +86,31 @@ void process_file(const std::string& path,const std::string& destination,const p
     const uint32_t effect_halo=(effects.sharpen>0 || effects.denoise_luma>0 || effects.denoise_chroma>0)
       ?uint32_t(std::ceil(effects.radius)):0;
     const uint32_t halo=effect_halo+(look&&look->kind&&strength>0&&look->texture>0?2:0);
-    require_memory(reserve+uint64_t(output_width)*(16+2*halo)*80,budget,"JPEG 分条处理");
+    require_memory(reserve+uint64_t(output_width)*(16+2*halo)*80,budget,probe.format+" 分条处理");
     const uint32_t strip_rows=uint32_t(std::min<uint64_t>(128,
       (budget-reserve)/(uint64_t(output_width)*80)-2*halo));
-    auto disk=jpeg_to_disk(path,input,budget-lut_bytes);
+    auto disk=probe.raw_disk?raw_to_disk(path,input,budget-lut_bytes):
+        probe.tiff?tiff_to_disk(path,input,budget-lut_bytes):
+        jpeg_to_disk(path,input,budget-lut_bytes);
+    info=disk->metadata.info;
+    if(disk->metadata.orientation>=5)std::swap(info.width,info.height);
     // One source analysis for the whole photo; never adapt individual strips.
     const auto analysis=look&&look->kind?analyze_look(*disk):pe_look_analysis{};
     Output output(destination);
     auto output_info=info;output_info.width=output_width;output_info.height=output_height;
-    auto writer=row_writer(output.file,output_info,format,quality,metadata,&probe.metadata.lens);
+    auto writer=row_writer(output.file,output_info,format,quality,metadata,&disk->metadata.lens);
     for(uint32_t y=0;y<output_height;y+=strip_rows){
       const uint32_t rows=std::min(strip_rows,output_height-y);
-      auto frame=border_strip(info,border,y,rows,style,logo.get(),adjustments,accent.get());
-      const uint32_t first=std::max(y,pad),last=std::min(y+rows,pad+info.height);
+      auto frame=framed_strip(y,rows);
+      const uint32_t first=std::max(y,layout.y),last=std::min(y+rows,layout.y+info.height);
       if(first<last){
-        const uint32_t start=first-pad,finish=last-pad;
+        const uint32_t start=first-layout.y,finish=last-layout.y;
         const uint32_t begin=start>halo?start-halo:0,end=std::min(info.height,finish+halo);
         auto edited=render(disk->strip(begin,end-begin),params,effects,lut.get(),strength,
             look,analysis,info.width,info.height,begin);
         for(uint32_t row=first;row<last;++row)
-          std::copy_n(edited->pixels.data()+size_t(row-pad-begin)*info.width*4,size_t(info.width)*4,
-              frame->pixels.data()+(size_t(row-y)*output_width+pad)*4);
+          std::copy_n(edited->pixels.data()+size_t(row-layout.y-begin)*info.width*4,size_t(info.width)*4,
+              frame->pixels.data()+(size_t(row-y)*output_width+layout.x)*4);
       }
       writer->rows(*frame,0,rows);
     }
@@ -115,8 +126,9 @@ void process_file(const std::string& path,const std::string& destination,const p
   // including spatial scratch buffers and BOTH input and enlarged border canvas.
   const uint64_t pixels=uint64_t(info.width)*info.height;
   // Non-JPEG metadata probes may omit EXIF/RAW rotation: budget both canvases.
-  const uint64_t canvas=std::max(uint64_t(output_width)*output_height,
-      uint64_t(info.height+2*pad)*(info.width+2*pad+bottom));
+  auto rotated=info;std::swap(rotated.width,rotated.height);
+  const auto other=template_canvas(rotated,border,decoration);
+  const uint64_t canvas=std::max(uint64_t(output_width)*output_height,uint64_t(other.width)*other.height);
   const uint64_t decode_peak=probe.raw?probe.sensor_pixels*64+pixels*24:pixels*40+probe.file_bytes*2;
   const uint64_t render_peak=std::max(pixels*40,pixels*16+canvas*(format==PE_HEIF?32:16));
   const std::string output_format=format==PE_JPEG?"JPEG":format==PE_PNG?"PNG":"HEIF";
@@ -137,7 +149,7 @@ void process_file(const std::string& path,const std::string& destination,const p
   const auto analysis=look&&look->kind?analyze_look(*source):pe_look_analysis{};
   const uint32_t width=source->info.width,height=source->info.height;
   source=render(std::move(source),params,effects,lut.get(),strength,look,analysis,width,height,0);
-  source=add_border(*source,border,style,logo.get(),adjustments,accent.get());
+  source=decoration?add_template(*source,*style,adjustments,*decoration):add_border(*source,border,style,logo.get(),adjustments,accent.get());
   encode(*source,destination,format,quality,metadata);
 }
 }

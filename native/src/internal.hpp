@@ -66,7 +66,7 @@ struct ImageProbe {
   Metadata metadata;
   uint64_t file_bytes = 0, sensor_pixels = 0;
   std::string format = "RAW";
-  bool jpeg = false, progressive = false, raw = false;
+  bool jpeg = false, progressive = false, raw = false, tiff = false, raw_disk = false;
 };
 ImageProbe probe_image(const std::string&, uint64_t file_limit);
 struct DiskImage {
@@ -76,12 +76,24 @@ struct DiskImage {
   std::unique_ptr<pe_image> strip(uint32_t y, uint32_t rows) const;
 };
 std::unique_ptr<DiskImage> jpeg_to_disk(const std::string&, const pe_decode_options&, uint64_t budget);
+std::unique_ptr<DiskImage> raw_to_disk(const std::string&, const pe_decode_options&, uint64_t budget);
+bool tiff_raster_file(const std::string&);
+Metadata tiff_metadata(const std::string&);
+std::unique_ptr<pe_image> tiff_decode(const std::string&, const pe_decode_options&);
+std::unique_ptr<DiskImage> tiff_to_disk(const std::string&, const pe_decode_options&, uint64_t budget);
 struct RowWriter {
   virtual ~RowWriter() = default;
   virtual void rows(const pe_image&, uint32_t begin, uint32_t count) = 0;
   virtual void finish() = 0;
 };
 std::unique_ptr<RowWriter> row_writer(FILE*, const pe_image_info&, pe_format, uint32_t quality, bool metadata, const pe_lens_info* lens = nullptr);
+struct FrameCanvas { uint32_t width, height, x, y; };
+FrameCanvas template_canvas(const pe_image_info&, const pe_border&, const pe_frame_template*);
+void validate_template(const pe_frame_template&);
+std::unique_ptr<pe_image> template_avatar(const pe_frame_template*);
+std::unique_ptr<pe_image> template_strip(const pe_image_info&, const pe_border&, const pe_frame_template&,
+    const pe_image*, uint32_t, uint32_t);
+std::unique_ptr<pe_image> add_template(const pe_image&, const pe_frame&, const pe_frame_adjustments*, const pe_frame_template&);
 void validate_frame(const pe_frame&);
 void validate_frame_adjustments(const pe_frame_adjustments&);
 std::unique_ptr<pe_image> combined_frame_logo(std::unique_ptr<pe_image>,const pe_image*);
@@ -93,7 +105,7 @@ void process_file(const std::string&, const std::string&, const pe_decode_option
     const pe_params&, const pe_effects&, const char* lut_path, double strength,
     const pe_border&, pe_format, uint32_t quality, bool metadata, uint64_t budget,
     const pe_frame* frame = nullptr, const pe_look* look = nullptr,
-    const pe_frame_adjustments* adjustments = nullptr);
+    const pe_frame_adjustments* adjustments = nullptr, const pe_frame_template* decoration = nullptr);
 void validate_look(const pe_look&);
 pe_look_analysis analyze_look(const pe_image&);
 pe_look_analysis analyze_look(const DiskImage&);

@@ -26,7 +26,7 @@ uint32_t pe_abi_version() { return 1; }
 uint64_t pe_memory_budget(uint32_t preview) { return pe::memory_budget(preview != 0); }
 const char* pe_last_error() { return last_error.data(); }
 const char* pe_capabilities() {
-#define PE_BASE_CAPABILITIES "jpeg,png,raw,icc,exif,lut,border,frame,hsl,curve,split-tone,sharpen,denoise"
+#define PE_BASE_CAPABILITIES "jpeg,png,tiff,raw,icc,exif,lut,border,frame,hsl,curve,split-tone,sharpen,denoise"
 #ifdef PE_HAVE_WEBP
 #define PE_CODEC_CAPABILITIES PE_BASE_CAPABILITIES ",webp"
 #else
@@ -137,6 +137,26 @@ pe_status pe_add_frame_advanced(const pe_image* img,const pe_frame* frame,const 
     auto accent=pe::frame_logo(other);
     if(!a->enabled)logo=pe::combined_frame_logo(std::move(logo),accent.get());
     return pe::add_border(*img,frame->border,frame,logo.get(),a,accent.get());
+  });
+}
+pe_status pe_add_frame_template(const pe_image* img,const pe_frame* f,const pe_frame_adjustments* a,const pe_frame_template* t,pe_image** out) {
+  return output(out,[&]{
+    pe::require(img&&f&&a&&t,"Missing template arguments");
+    pe::validate_frame(*f);pe::validate_frame_adjustments(*a);pe::validate_template(*t);
+    return pe::add_template(*img,*f,a,*t);
+  });
+}
+pe_status pe_process_file_template(const char* source,const char* destination,const pe_decode_options* options,
+    const pe_params* params,const pe_effects* effects,const char* lut_path,double strength,
+    const pe_frame* frame,const pe_look* look,const pe_frame_adjustments* a,const pe_frame_template* t,
+    pe_format format,uint32_t quality,uint32_t metadata,uint64_t budget) {
+  return guard([&]{
+    pe::require(source&&destination&&options&&params&&effects&&frame&&look&&a&&t,"Missing template export arguments");
+    pe::require(options->max_pixels&&options->max_pixels<=pe::pixel_limit&&options->max_file_bytes,"Invalid decode limits");
+    pe::require(quality>=1&&quality<=100,"Quality must be between 1 and 100");
+    pe::require(format==PE_JPEG||format==PE_PNG||format==PE_HEIF,"Unsupported output format",PE_UNSUPPORTED);
+    pe::validate_template(*t);
+    pe::process_file(source,destination,*options,*params,*effects,lut_path,strength,frame->border,format,quality,metadata!=0,budget,frame,look,a,t);
   });
 }
 pe_status pe_analyze_look(const pe_image* image,pe_look_analysis* analysis){

@@ -41,6 +41,7 @@ const frameAccents = <String, String>{
 };
 const frameFonts = <String, String>{
   'sans': '简洁无衬线',
+  'cjk': '思源黑体 · 中文',
   'mono': '等宽参数',
   'serif': '作品衬线',
   'custom': '本地字体',
@@ -107,6 +108,21 @@ String accentForLens(String make, String model) {
     return 'hasselblad';
   }
   return '';
+}
+
+/// Only automatically chosen ordinary brand marks are redundant. Explicit
+/// manual choices and series badges remain visible.
+String accentForCombination(String camera, String lens,
+    {required bool automatic}) {
+  String family(String id) => switch (id) {
+        'sony-alpha' => 'sony',
+        'hasselblad-h' => 'hasselblad',
+        'panasonic' => 'lumix',
+        _ => id,
+      };
+  return automatic && camera.isNotEmpty && family(camera) == family(lens)
+      ? ''
+      : lens;
 }
 
 int resolvedMarkTone(int tone, int background) {

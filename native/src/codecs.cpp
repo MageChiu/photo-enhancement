@@ -212,8 +212,54 @@ std::unique_ptr<pe_image> png_decode(const Bytes& bytes, const pe_decode_options
   return out;
 }
 
+// Keep the bounded route restricted to the representation whose allocation
+// stages we account for. Other RAW variants retain the conservative fallback.
+bool raw_disk_supported(LibRaw& raw) {
+  libraw_decoder_info_t decoder{};
+  return raw.get_decoder_info(&decoder)==LIBRAW_SUCCESS &&
+      !(decoder.decoder_flags & (LIBRAW_DECODER_OWNALLOC | LIBRAW_DECODER_3CHANNEL |
+          LIBRAW_DECODER_UNSUPPORTED_FORMAT | LIBRAW_DECODER_NOTSET)) &&
+      raw.imgdata.idata.filters>1000 && raw.imgdata.idata.colors==3 &&
+      !raw.is_fuji_rotated() && !raw.is_floating_point() && !raw.is_sraw() &&
+      std::abs(raw.imgdata.sizes.pixel_aspect-1)<.005;
+}
+uint16_t raw_orientation(int flip) {
+  constexpr uint16_t orientations[]{1,2,4,3,5,8,6,7};
+  require(flip>=0 && flip<8,"Unsupported RAW orientation",PE_UNSUPPORTED);
+  return orientations[flip];
+}
+void raw_metadata(LibRaw& raw, pe_image_info& info, pe_lens_info& lens) {
+  info.is_raw = 1;
+  std::snprintf(info.make, sizeof(info.make), "%s", raw.imgdata.idata.make);
+  std::snprintf(info.model, sizeof(info.model), "%s", raw.imgdata.idata.model);
+  std::snprintf(lens.make,sizeof(lens.make),"%s",raw.imgdata.lens.LensMake);
+  std::snprintf(lens.model,sizeof(lens.model),"%s",raw.imgdata.lens.Lens[0]?raw.imgdata.lens.Lens:raw.imgdata.lens.makernotes.Lens);
+  info.iso = uint32_t(std::max(0.f, raw.imgdata.other.iso_speed));
+  info.aperture = raw.imgdata.other.aperture; info.shutter = raw.imgdata.other.shutter;
+  info.focal_length = raw.imgdata.other.focal_len;
+  if (raw.imgdata.other.timestamp > 0) {
+    // LibRaw parses timezone-less camera timestamps with mktime(). Reverse
+    // that conversion locally; never label the camera wall time as UTC.
+    std::tm captured{};
+    if (localtime_r(&raw.imgdata.other.timestamp, &captured)) {
+      std::strftime(info.captured_at, sizeof(info.captured_at), "%Y:%m:%d %H:%M:%S", &captured);
+    }
+  }
+}
+// Same curve setup as LibRaw::copy_mem_image for our fixed no_auto_bright,
+// linear RGB16 recipe. Expose only this protected operation; LibRaw still
+// performs the entire demosaic and camera color conversion unchanged.
+struct DiskRaw : LibRaw {
+  void prepare_output() {
+    gamma_curve(imgdata.params.gamm[0],imgdata.params.gamm[1],2,
+        int(65536/imgdata.params.bright));
+  }
+};
+
 std::unique_ptr<pe_image> raw_decode(const std::string& path, const pe_decode_options& options) {
-  LibRaw raw;
+  // Dart FFI worker threads have small stacks; LibRaw owns large inline state.
+  auto raw_owner=std::make_unique<LibRaw>();
+  auto& raw=*raw_owner;
   constexpr uint64_t MiB = 1024ULL * 1024;
   const uint64_t budget = memory_budget();
   // LibRaw's own limit covers RAW allocation paths, not the whole application.
@@ -247,16 +293,34 @@ std::unique_ptr<pe_image> raw_decode(const std::string& path, const pe_decode_op
   const uint32_t sensor_height = std::max(uint32_t(raw.imgdata.sizes.raw_height),
       uint32_t(raw.imgdata.sizes.height) + raw.imgdata.sizes.top_margin);
   checked_pixels(sensor_width, sensor_height, options.max_pixels);
-  auto check_budget = [&](bool reduced, uint32_t width, uint32_t height) {
+  const auto& unpacker=raw.get_internal_data_pointer()->unpacker_data;
+  // These bundled LibRaw decoders read directly into the single CFA plane
+  // using row/block scratch. Do not extend this allowance to tiled DNG,
+  // alternate decoder backends, multi-frame, or unreviewed decoder families.
+  const std::string decoder_name=known_decoder && decoder.decoder_name?decoder.decoder_name:"";
+  const bool bounded_unpack=half_preview && raw.imgdata.idata.raw_count==1 &&
+      (decoder_name=="fuji_compressed_load_raw()" || decoder_name=="unpacked_load_raw()" ||
+       decoder_name=="unpacked_load_raw_reversed()" ||
+       (decoder_name=="packed_dng_load_raw()" && unpacker.tiff_samples==1 &&
+           unpacker.tile_length>=INT_MAX));
+  if(bounded_unpack){
+    raw.imgdata.rawparams.use_rawspeed=0;
+    raw.imgdata.rawparams.use_dngsdk=0;
+  }
+  auto check_budget = [&](bool reduced, uint32_t width, uint32_t height, bool unpacking) {
     checked_pixels(width, height, options.max_pixels);
-    const uint64_t estimate = reduced
-        ? raw_preview_memory(sensor_width, sensor_height, width, height).peak()
-        : uint64_t(sensor_width) * sensor_height * 64;
+    const auto stages=raw_preview_memory(sensor_width,sensor_height,width,height,bounded_unpack);
+    // Once unpack() has completed, its transient peak is no longer pending.
+    // In particular, do not compare that peak with the smaller free-memory
+    // snapshot caused by our already retained sensor buffer.
+    const uint64_t estimate = (reduced
+        ? (unpacking?stages.peak():std::max(stages.process,stages.output))
+        : uint64_t(sensor_width) * sensor_height * 64) + unpacker.meta_length;
     require_memory(estimate, std::min(budget, memory_budget()), reduced
-        ? "RAW 半尺寸预览（含完整传感器解包）"
+        ? (unpacking?"RAW 半尺寸预览（含完整传感器解包）":"RAW 半尺寸预览处理（传感器解包已完成）")
         : "RAW 解码（此路径按完整图像缓冲估算）");
   };
-  check_budget(half_preview, raw.imgdata.sizes.width, raw.imgdata.sizes.height);
+  check_budget(half_preview, raw.imgdata.sizes.width, raw.imgdata.sizes.height, true);
   auto check_raw = [&](int status, const char* stage) {
     require(status == LIBRAW_SUCCESS, std::string(stage) + libraw_strerror(status),
         status == LIBRAW_TOO_BIG ? PE_LIMIT_EXCEEDED :
@@ -268,8 +332,8 @@ std::unique_ptr<pe_image> raw_decode(const std::string& path, const pe_decode_op
   // unpacked representation before allowing the smaller processing estimate.
   const auto& data = raw.imgdata.rawdata;
   const bool actual_half = half_preview && data.iparams.filters && data.raw_image &&
-      !data.color3_image && !data.color4_image && !data.float3_image && !data.float4_image;
-  check_budget(actual_half, data.sizes.width, data.sizes.height);
+      !data.color3_image && !data.color4_image && !data.float_image && !data.float3_image && !data.float4_image;
+  check_budget(actual_half, data.sizes.width, data.sizes.height, false);
   result = raw.dcraw_process();
   check_raw(result, "LibRaw process: ");
   int width = 0, height = 0, colors = 0, bits = 0;
@@ -277,7 +341,7 @@ std::unique_ptr<pe_image> raw_decode(const std::string& path, const pe_decode_op
   require(width > 0 && height > 0 && bits == 16 && (colors == 3 || colors == 4),
       "LibRaw did not produce RGB16 output", PE_DECODE_ERROR);
   const uint64_t pixels = checked_pixels(uint32_t(width), uint32_t(height), options.max_pixels);
-  require_memory(uint64_t(sensor_width) * sensor_height * 4 + pixels * 16 + 64 * MiB,
+  require_memory(uint64_t(sensor_width) * sensor_height * 4 + pixels * 16 + 64 * MiB + unpacker.meta_length,
       std::min(budget, memory_budget()), "RAW 输出像素转换");
   auto out = image(uint32_t(width), uint32_t(height));
   // copy_mem_image respects EXIF rotation and pixel-aspect processing. Give it
@@ -288,22 +352,7 @@ std::unique_ptr<pe_image> raw_decode(const std::string& path, const pe_decode_op
     auto* row = out->pixels.data() + size_t(y) * size_t(width) * 4;
     expand_raw_row(row, uint32_t(width), uint32_t(colors));
   }
-  auto& info = out->info; info.is_raw = 1;
-  std::snprintf(info.make, sizeof(info.make), "%s", raw.imgdata.idata.make);
-  std::snprintf(info.model, sizeof(info.model), "%s", raw.imgdata.idata.model);
-  std::snprintf(out->lens.make,sizeof(out->lens.make),"%s",raw.imgdata.lens.LensMake);
-  std::snprintf(out->lens.model,sizeof(out->lens.model),"%s",raw.imgdata.lens.Lens[0]?raw.imgdata.lens.Lens:raw.imgdata.lens.makernotes.Lens);
-  info.iso = uint32_t(std::max(0.f, raw.imgdata.other.iso_speed));
-  info.aperture = raw.imgdata.other.aperture; info.shutter = raw.imgdata.other.shutter;
-  info.focal_length = raw.imgdata.other.focal_len;
-  if (raw.imgdata.other.timestamp > 0) {
-    // LibRaw parses timezone-less camera timestamps with mktime(). Reverse
-    // that conversion locally; never label the camera wall time as UTC.
-    std::tm captured{};
-    if (localtime_r(&raw.imgdata.other.timestamp, &captured)) {
-      std::strftime(info.captured_at, sizeof(info.captured_at), "%Y:%m:%d %H:%M:%S", &captured);
-    }
-  }
+  raw_metadata(raw,out->info,out->lens);
   return out;
 }
 
@@ -654,6 +703,9 @@ ImageProbe probe_image(const std::string& path,uint64_t file_limit){
     probe.metadata.info.width=integer(16);probe.metadata.info.height=integer(20);probe.format="PNG";
     probe.metadata.lens=chunk_lens(path,probe.file_bytes,true);
   }
+  else if(tiff_raster_file(path)){
+    probe.metadata=tiff_metadata(path);probe.tiff=true;probe.format="TIFF";
+  }
 #ifdef PE_HAVE_WEBP
   else if(std::memcmp(header.data(),"RIFF",4)==0 && std::memcmp(header.data()+8,"WEBP",4)==0){
     int w=0,h=0;require(WebPGetInfo(header.data(),header.size(),&w,&h),"Invalid WebP header",PE_DECODE_ERROR);
@@ -682,14 +734,77 @@ ImageProbe probe_image(const std::string& path,uint64_t file_limit){
   }
 #endif
   else{
-    LibRaw raw;const int status=raw.open_file(path.c_str());require(status==LIBRAW_SUCCESS,libraw_strerror(status),PE_UNSUPPORTED);
+    auto raw_owner=std::make_unique<LibRaw>();auto& raw=*raw_owner;
+    const int status=raw.open_file(path.c_str());require(status==LIBRAW_SUCCESS,libraw_strerror(status),PE_UNSUPPORTED);
     std::snprintf(probe.metadata.lens.make,sizeof(probe.metadata.lens.make),"%s",raw.imgdata.lens.LensMake);
     std::snprintf(probe.metadata.lens.model,sizeof(probe.metadata.lens.model),"%s",raw.imgdata.lens.Lens[0]?raw.imgdata.lens.Lens:raw.imgdata.lens.makernotes.Lens);
     probe.metadata.info.width=raw.imgdata.sizes.width;probe.metadata.info.height=raw.imgdata.sizes.height;
     checked_pixels(raw.imgdata.sizes.raw_width,raw.imgdata.sizes.raw_height);
     probe.sensor_pixels=uint64_t(raw.imgdata.sizes.raw_width)*raw.imgdata.sizes.raw_height;probe.raw=true;
+    probe.raw_disk=raw_disk_supported(raw);
+    if(probe.raw_disk){
+      probe.metadata.orientation=raw_orientation(raw.imgdata.sizes.flip);
+      raw_metadata(raw,probe.metadata.info,probe.metadata.lens);
+    }
   }
   checked_pixels(probe.metadata.info.width,probe.metadata.info.height);return probe;
+}
+
+std::unique_ptr<DiskImage> raw_to_disk(const std::string& path,const pe_decode_options& options,uint64_t budget){
+  auto owner=std::make_unique<DiskRaw>();auto& raw=*owner;
+  auto check=[](int status){
+    require(status==LIBRAW_SUCCESS,std::string("LibRaw: ")+libraw_strerror(status),
+        status==LIBRAW_TOO_BIG?PE_LIMIT_EXCEEDED:
+        status==LIBRAW_UNSUFFICIENT_MEMORY?PE_OUT_OF_MEMORY:PE_DECODE_ERROR);
+  };
+  raw.imgdata.rawparams.max_raw_memory_mb=unsigned(std::min<uint64_t>(
+      raw.imgdata.rawparams.max_raw_memory_mb,budget/1048576));
+  check(raw.open_file(path.c_str()));
+  require(raw_disk_supported(raw),"RAW representation is not supported by disk export",PE_UNSUPPORTED);
+  const auto& sizes=raw.imgdata.sizes;
+  const uint32_t sw=std::max(uint32_t(sizes.raw_width),uint32_t(sizes.width)+sizes.left_margin);
+  const uint32_t sh=std::max(uint32_t(sizes.raw_height),uint32_t(sizes.height)+sizes.top_margin);
+  const uint64_t sensor=checked_pixels(sw,sh,options.max_pixels);
+  const uint64_t pixels=checked_pixels(sizes.width,sizes.height,options.max_pixels);
+  const uint64_t peak=raw_disk_memory(sensor,pixels);
+  auto check_budget=[&]{require_memory(peak,std::min(budget,memory_budget()),"RAW 原尺寸解码及磁盘缓存");};
+  check_budget();
+  const auto temporary=std::filesystem::temp_directory_path();
+  require(std::filesystem::space(temporary).available>=pixels*8+64*1024*1024,
+      "RAW 导出的临时磁盘空间不足，需要至少 "+std::to_string((pixels*8+1048575)/1048576)+" MiB",PE_IO_ERROR);
+  auto disk=std::make_unique<DiskImage>();
+  std::string name=(temporary/"photo-raw-pixels-XXXXXX").string();
+  std::vector<char> writable(name.begin(),name.end());writable.push_back(0);
+  const int fd=mkstemp(writable.data());require(fd>=0,"Cannot create private RAW pixel storage",PE_IO_ERROR);
+  ::unlink(writable.data());disk->file=fdopen(fd,"w+b");
+  if(!disk->file){::close(fd);throw Error(PE_IO_ERROR,"Cannot open RAW pixel storage");}
+  auto& params=raw.imgdata.params;
+  params.output_bps=16;params.output_color=1;params.gamm[0]=1;params.gamm[1]=1;
+  params.no_auto_bright=1;params.use_camera_wb=1;params.use_auto_wb=0;params.user_qual=3;
+  check(raw.unpack());
+  const auto& data=raw.imgdata.rawdata;
+  require(data.raw_image && !data.color3_image && !data.color4_image &&
+      !data.float_image && !data.float3_image && !data.float4_image,
+      "RAW unpacked representation is not supported by disk export",PE_UNSUPPORTED);
+  check_budget();check(raw.dcraw_process());
+  require(raw.imgdata.image && raw.imgdata.idata.colors==3 &&
+      uint64_t(sizes.width)*sizes.height==pixels,"Unexpected RAW output dimensions",PE_DECODE_ERROR);
+  disk->metadata.info.width=sizes.width;disk->metadata.info.height=sizes.height;
+  disk->metadata.orientation=raw_orientation(sizes.flip);
+  raw_metadata(raw,disk->metadata.info,disk->metadata.lens);
+  raw.prepare_output();
+  std::vector<uint16_t> row(size_t(sizes.width)*4);
+  for(uint32_t y=0;y<sizes.height;++y){
+    for(uint32_t x=0;x<sizes.width;++x){
+      const auto* rgb=raw.imgdata.image[size_t(y)*sizes.width+x];
+      for(int c=0;c<3;++c)row[size_t(x)*4+c]=raw.imgdata.color.curve[rgb[c]];
+      row[size_t(x)*4+3]=65535;
+    }
+    require(std::fwrite(row.data(),sizeof(uint16_t),row.size(),disk->file)==row.size(),
+        "Cannot write RAW temporary pixels",PE_IO_ERROR);
+  }
+  require(std::fflush(disk->file)==0,"Cannot flush RAW temporary pixels",PE_IO_ERROR);
+  return disk;
 }
 
 std::unique_ptr<DiskImage> jpeg_to_disk(const std::string& path,const pe_decode_options& options,uint64_t budget){
@@ -732,6 +847,7 @@ std::unique_ptr<pe_image> decode(const std::string& path, const pe_decode_option
     if (options.max_edge && std::max(out->info.width,out->info.height)>options.max_edge) return resize(*out,options.max_edge);
     return out;
   }
+  if(tiff_raster_file(path))return tiff_decode(path,options);
   const bool png = png_sig_cmp(signature.data(), 0, 8) == 0;
   const bool webp = std::memcmp(signature.data(), "RIFF", 4) == 0 &&
       std::memcmp(signature.data() + 8, "WEBP", 4) == 0;

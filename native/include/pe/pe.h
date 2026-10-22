@@ -116,6 +116,21 @@ typedef struct pe_image_info {
   char captured_at[64];
 } pe_image_info;
 
+/* Template extension: kind 0=legacy, 1=film, 2=social;
+ * variant film: 0=vertical perforations, 1=horizontal; social: Instagram,
+ * Facebook, X, WeChat Moments. flags: holes=1, avatar=2, actions=4.
+ * All dimensions derive from source short edge; photo is never cropped. */
+typedef struct pe_frame_template {
+  uint32_t kind, variant, flags;
+  char title[128], subtitle[128], location[256], body[1024], timestamp[256], stats[256];
+  char avatar_path[1024];
+} pe_frame_template;
+PE_API pe_status pe_add_frame_template(const pe_image*, const pe_frame*,
+    const pe_frame_adjustments*, const pe_frame_template*, pe_image**);
+PE_API pe_status pe_process_file_template(const char*, const char*, const pe_decode_options*,
+    const pe_params*, const pe_effects*, const char*, double, const pe_frame*, const pe_look*,
+    const pe_frame_adjustments*, const pe_frame_template*, pe_format, uint32_t, uint32_t, uint64_t);
+
 PE_API uint32_t pe_abi_version(void);
 /* Returns a fresh device/headroom-based working budget; preview != 0 caps
  * it for interactive work. This is an estimate, not an allocation guarantee. */
@@ -143,8 +158,8 @@ PE_API pe_status pe_add_border(const pe_image* image, const pe_border* border, p
  * Encoded orientation is always 1. PNG output uses 16-bit display sRGB. */
 PE_API pe_status pe_encode(const pe_image* image, const char* path, pe_format format,
                           uint32_t quality, uint32_t include_metadata);
-/* Budgeted full-resolution pipeline. Baseline JPEG->JPEG/PNG can spill pixels
- * to a private temporary file and render strips (including orientation/halo).
+/* Budgeted full-resolution pipeline. JPEG/TIFF and supported integer Bayer RAW
+ * spill pixels to a private temporary file and render strips (orientation/halo).
  * memory_budget=0 selects the automatic device policy. Other formats fail
  * before full decoding if the estimated pipeline exceeds the budget. */
 PE_API pe_status pe_process_file(const char* source, const char* destination,
