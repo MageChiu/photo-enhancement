@@ -1,5 +1,6 @@
 #pragma once
 #include "pe/pe.h"
+#include "platform_io.hpp"
 #include <algorithm>
 #include <array>
 #include <cmath>

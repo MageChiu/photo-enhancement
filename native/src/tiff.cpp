@@ -5,7 +5,6 @@
 #include <cstdarg>
 #include <cstring>
 #include <functional>
-#include <unistd.h>
 
 namespace pe {
 namespace {
@@ -33,7 +32,11 @@ struct Reader {
     TIFFOpenOptionsSetErrorHandlerExtR(options.get(),diagnostic,error);
     TIFFOpenOptionsSetWarningHandlerExtR(options.get(),diagnostic,nullptr);
     // No full-file mmap; respect the same explicit memory policy as JPEG.
+#ifdef _WIN32
+    file.reset(TIFFOpenWExt(io::path(path).c_str(),"rm",options.get()));
+#else
     file.reset(TIFFOpenExt(path.c_str(),"rm",options.get()));
+#endif
     require(bool(file),std::string("TIFF: ")+error,PE_DECODE_ERROR);
     auto* t=file.get();
     require(TIFFGetField(t,TIFFTAG_IMAGEWIDTH,&width) &&
@@ -175,7 +178,7 @@ struct Reader {
 }
 
 bool tiff_raster_file(const std::string& path){
-  uint8_t h[4]{};std::ifstream f(path,std::ios::binary);f.read(reinterpret_cast<char*>(h),4);
+  uint8_t h[4]{};std::ifstream f(io::path(path),std::ios::binary);f.read(reinterpret_cast<char*>(h),4);
   const bool signature=(h[0]=='I' && h[1]=='I' && (h[2]==42 || h[2]==43) && h[3]==0) ||
       (h[0]=='M' && h[1]=='M' && h[2]==0 && (h[3]==42 || h[3]==43));
   if(!signature)return false;
@@ -183,7 +186,7 @@ bool tiff_raster_file(const std::string& path){
   // Let LibRaw positively identify those before interpreting raster samples.
   // The LibRaw object itself is too large for some Dart worker thread stacks.
   auto raw=std::make_unique<LibRaw>();
-  return raw->open_file(path.c_str())!=LIBRAW_SUCCESS || !raw->imgdata.idata.raw_count;
+  return raw->open_file(io::path(path).c_str())!=LIBRAW_SUCCESS || !raw->imgdata.idata.raw_count;
 }
 Metadata tiff_metadata(const std::string& path){return Reader(path,memory_budget()).meta;}
 
@@ -213,11 +216,9 @@ std::unique_ptr<DiskImage> tiff_to_disk(const std::string& path,const pe_decode_
   const uint64_t size=checked_pixels(reader.width,reader.height,options.max_pixels)*8ULL;
   const auto directory=std::filesystem::temp_directory_path();
   require(std::filesystem::space(directory).available>=size+64*MiB,"TIFF 临时像素缓存磁盘空间不足",PE_IO_ERROR);
-  std::string name=(directory/"photo-tiff-XXXXXX").string();std::vector<char> filename(name.begin(),name.end());filename.push_back(0);
-  const int fd=mkstemp(filename.data());require(fd>=0,"Cannot create TIFF pixel storage",PE_IO_ERROR);::unlink(filename.data());
-  auto disk=std::make_unique<DiskImage>();disk->file=fdopen(fd,"w+b");
-  if(!disk->file){::close(fd);throw Error(PE_IO_ERROR,"Cannot open TIFF pixel storage");}
-  require(ftruncate(fd,off_t(size))==0,"Cannot size TIFF pixel storage",PE_IO_ERROR);
+  auto disk=std::make_unique<DiskImage>();disk->file=io::temporary();
+  require(disk->file,"Cannot create TIFF pixel storage",PE_IO_ERROR);
+  require(io::resize(disk->file,size),"Cannot size TIFF pixel storage",PE_IO_ERROR);
   disk->metadata=reader.meta;reader.prepare_color();
   reader.blocks(0,[&](uint32_t x,uint32_t y,uint32_t w,uint32_t h,uint32_t stride,const Reader::Planes& data){
     auto chunk=image(w,h);
@@ -225,8 +226,8 @@ std::unique_ptr<DiskImage> tiff_to_disk(const std::string& path,const pe_decode_
       reader.pixel(data,size_t(dy)*stride+dx,chunk->pixels.data()+(size_t(dy)*w+dx)*4);
     reader.convert(*chunk);
     for(uint32_t dy=0;dy<h;++dy){
-      const size_t bytes=size_t(w)*8;const off_t offset=off_t((uint64_t(y+dy)*reader.width+x)*8);
-      require(pwrite(fd,chunk->pixels.data()+size_t(dy)*w*4,bytes,offset)==ssize_t(bytes),"Cannot write TIFF pixel storage",PE_IO_ERROR);
+      const size_t bytes=size_t(w)*8;const uint64_t offset=(uint64_t(y+dy)*reader.width+x)*8;
+      require(io::write_at(disk->file,chunk->pixels.data()+size_t(dy)*w*4,bytes,offset),"Cannot write TIFF pixel storage",PE_IO_ERROR);
     }
   });
   return disk;

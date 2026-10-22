@@ -1,4 +1,5 @@
 #include "internal.hpp"
+#include "font_io.hpp"
 #include <ft2build.h>
 #include FT_FREETYPE_H
 #include FT_MULTIPLE_MASTERS_H
@@ -21,10 +22,11 @@ std::vector<uint32_t> characters(const std::string& s) {
 }
 struct Font {
   FT_Library lib=nullptr;FT_Face face=nullptr;
+  std::vector<unsigned char> storage;
   explicit Font(const char* path){
     require(*path,"请选择相框字体");
     require(FT_Init_FreeType(&lib)==0,"Cannot initialize template font",PE_IO_ERROR);
-    if(FT_New_Face(lib,path,0,&face)!=0){FT_Done_FreeType(lib);lib=nullptr;throw Error(PE_IO_ERROR,"Cannot load template font");}
+    if(open_font(lib,path,storage,&face)!=0){FT_Done_FreeType(lib);lib=nullptr;throw Error(PE_IO_ERROR,"Cannot load template font");}
     regularWeight();
   }
   void regularWeight() {

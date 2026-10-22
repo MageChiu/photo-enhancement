@@ -3,7 +3,11 @@
 
 #include <stdint.h>
 #if defined(_WIN32)
+#if defined(PE_BUILDING_LIBRARY)
 #define PE_API __declspec(dllexport)
+#else
+#define PE_API __declspec(dllimport)
+#endif
 #else
 #define PE_API __attribute__((visibility("default")))
 #endif

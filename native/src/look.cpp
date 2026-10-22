@@ -1,5 +1,4 @@
 #include "internal.hpp"
-#include <unistd.h>
 
 namespace pe {
 namespace {
@@ -74,7 +73,7 @@ pe_look_analysis analyze_look(const DiskImage& disk){
   Statistics stats;
   for(uint32_t y=0;y<ny;++y){
     const uint64_t offset=uint64_t(sample_at(y,info.height,ny))*info.width*8;
-    require(pread(fileno(disk.file),row.data(),row.size()*2,off_t(offset))==ssize_t(row.size()*2),
+    require(io::read_at(disk.file,row.data(),row.size()*2,offset),
         "Cannot read RAW/JPEG colour analysis samples",PE_IO_ERROR);
     for(uint32_t x=0;x<nx;++x)stats.add(row.data()+size_t(sample_at(x,info.width,nx))*4);
   }

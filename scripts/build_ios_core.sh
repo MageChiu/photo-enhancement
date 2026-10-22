@@ -11,21 +11,17 @@ for target in iphoneos-arm64 iphonesimulator-arm64 iphonesimulator-x86_64; do
     -DCMAKE_OSX_DEPLOYMENT_TARGET=15.0 -DCMAKE_BUILD_TYPE=Release \
     -DPE_PORTABLE_DEPS=ON -DPE_STATIC_CORE=ON -DPE_WITH_HEIF=ON \
     -DPE_BUILD_TESTS=OFF -DPE_BUILD_CLI=OFF
-  cmake --build "$output" --target photo_core --parallel 8
+  cmake --build "$output" --config Release --target photo_core --parallel 8
   # Static archive dependencies are not folded into libphoto_core.a by CMake.
-  # Use an explicit archive list: no test/example binaries or host libraries.
-  xcrun libtool -static -o "$output/libphoto_core_combined.a" \
-    "$output/libphoto_core.a" "$output/libpe_raw.a" \
-    "$output/_deps/pe_jpeg-build/libjpeg.a" \
-    "$output/_deps/pe_png-build/libpng16.a" \
-    "$output/_deps/pe_tiff-build/libtiff/libtiff.a" \
-    "$output/_deps/pe_zlib-build/libz.a" \
-    "$output/libpe_lcms2.a" "$output/_deps/pe_freetype-build/libfreetype.a" \
-    "$output/_deps/pe_webp-build/libwebp.a" \
-    "$output/_deps/pe_webp-build/libwebpdemux.a" \
-    "$output/_deps/pe_webp-build/libsharpyuv.a" \
-    "$output/_deps/pe_heif-build/libheif/libheif.a" \
-    "$output/_deps/pe_de265-build/libde265/libde265.a"
+  # CMake emits an explicit target list, excluding tests/examples/host libraries.
+  manifest="$output/ios-core-archives-Release.txt"
+  test -s "$manifest" || { echo "Missing iOS archive manifest: $manifest" >&2; exit 1; }
+  set --
+  while IFS= read -r archive; do
+    test -f "$archive" || { echo "Missing iOS static archive: $archive" >&2; exit 1; }
+    set -- "$@" "$archive"
+  done < "$manifest"
+  xcrun libtool -static -o "$output/libphoto_core_combined.a" "$@"
 done
 mkdir -p app/ios/PhotoCore/iphoneos app/ios/PhotoCore/iphonesimulator
 cp build/ios-static/iphoneos-arm64/libphoto_core_combined.a app/ios/PhotoCore/iphoneos/libphoto_core.a

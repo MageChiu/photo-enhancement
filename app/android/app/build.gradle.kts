@@ -34,7 +34,8 @@ android {
         // flag during build.
         versionCode = flutter.versionCode
         versionName = flutter.versionName
-        ndk { abiFilters += listOf("arm64-v8a", "x86_64") }
+        // Flutter's --target-platform and --split-per-abi control the ABI set.
+        // Setting ndk.abiFilters here conflicts with AGP's APK ABI splits.
         externalNativeBuild {
             cmake {
                 arguments += listOf("-DPE_PORTABLE_DEPS=ON",

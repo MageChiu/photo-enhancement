@@ -10,8 +10,6 @@
 #include <cstdio>
 #include <ctime>
 #include <cstring>
-#include <fcntl.h>
-#include <unistd.h>
 #ifdef PE_HAVE_WEBP
 #include <webp/decode.h>
 #include <webp/demux.h>
@@ -25,7 +23,7 @@ namespace pe {
 namespace {
 using Bytes = std::vector<uint8_t>;
 Bytes read_file(const std::string& path, uint64_t limit) {
-  std::ifstream stream(path, std::ios::binary | std::ios::ate);
+  std::ifstream stream(io::path(path), std::ios::binary | std::ios::ate);
   require(bool(stream), "Cannot open image: " + path, PE_IO_ERROR);
   auto size = stream.tellg();
   require(size > 0 && uint64_t(size) <= limit, "Input is empty or exceeds file size limit", PE_LIMIT_EXCEEDED);
@@ -36,7 +34,7 @@ Bytes read_file(const std::string& path, uint64_t limit) {
 }
 bool heif_file(const std::string& path, uint64_t size) {
   std::array<uint8_t, 16> header{};
-  std::ifstream file(path, std::ios::binary);
+  std::ifstream file(io::path(path), std::ios::binary);
   file.read(reinterpret_cast<char*>(header.data()), header.size());
   if (file.gcount() < 16 || std::memcmp(header.data() + 4, "ftyp", 4) != 0) return false;
   const uint32_t length = uint32_t(header[0]) << 24 | uint32_t(header[1]) << 16 |
@@ -73,7 +71,7 @@ struct JpegRead {
 };
 void jpeg_header(JpegRead* state, const std::string& path) {
   jpeg_create_decompress(&state->codec); state->created = true;
-  state->file = std::fopen(path.c_str(), "rb");
+  state->file = io::open_read(path);
   require(state->file, "Cannot open JPEG", PE_IO_ERROR);
   jpeg_stdio_src(&state->codec, state->file);
   jpeg_save_markers(&state->codec, JPEG_APP0 + 1, 65535);
@@ -241,7 +239,7 @@ void raw_metadata(LibRaw& raw, pe_image_info& info, pe_lens_info& lens) {
     // LibRaw parses timezone-less camera timestamps with mktime(). Reverse
     // that conversion locally; never label the camera wall time as UTC.
     std::tm captured{};
-    if (localtime_r(&raw.imgdata.other.timestamp, &captured)) {
+    if (io::local_time(&raw.imgdata.other.timestamp, &captured)) {
       std::strftime(info.captured_at, sizeof(info.captured_at), "%Y:%m:%d %H:%M:%S", &captured);
     }
   }
@@ -266,7 +264,7 @@ std::unique_ptr<pe_image> raw_decode(const std::string& path, const pe_decode_op
   // Retain its default cap if it is stricter than our current device budget.
   raw.imgdata.rawparams.max_raw_memory_mb = unsigned(std::min<uint64_t>(
       raw.imgdata.rawparams.max_raw_memory_mb, budget / MiB));
-  int result = raw.open_file(path.c_str());
+  int result = raw.open_file(io::path(path).c_str());
   require(result == LIBRAW_SUCCESS, std::string("LibRaw: ") + libraw_strerror(result), PE_UNSUPPORTED);
   checked_pixels(raw.imgdata.sizes.raw_width, raw.imgdata.sizes.raw_height, options.max_pixels);
   checked_pixels(raw.imgdata.sizes.width, raw.imgdata.sizes.height, options.max_pixels);
@@ -385,6 +383,31 @@ std::unique_ptr<pe_image> webp_decode(const Bytes& bytes, const pe_decode_option
 #endif
 
 #ifdef PE_HAVE_HEIF
+struct HeifInput {
+  std::ifstream file;
+  int64_t size;
+  explicit HeifInput(const std::string& path):file(io::path(path),std::ios::binary|std::ios::ate),size(0) {
+    require(bool(file),"Cannot open HEIF",PE_IO_ERROR);
+    size=static_cast<int64_t>(file.tellg());file.seekg(0);
+  }
+  static int64_t position(void* user){return static_cast<int64_t>(static_cast<HeifInput*>(user)->file.tellg());}
+  static int read(void* data,size_t bytes,void* user){
+    auto& f=static_cast<HeifInput*>(user)->file;
+    f.read(static_cast<char*>(data),static_cast<std::streamsize>(bytes));return f?0:1;
+  }
+  static int seek(int64_t offset,void* user){
+    auto& f=static_cast<HeifInput*>(user)->file;f.clear();f.seekg(offset);return f?0:1;
+  }
+  static heif_reader_grow_status wait(int64_t target,void* user){
+    return target<=static_cast<HeifInput*>(user)->size?heif_reader_grow_status_size_reached:heif_reader_grow_status_size_beyond_eof;
+  }
+};
+const heif_reader heif_file_reader=[] {
+  heif_reader reader{};reader.reader_api_version=1;
+  reader.get_position=HeifInput::position;reader.read=HeifInput::read;
+  reader.seek=HeifInput::seek;reader.wait_for_file_size=HeifInput::wait;
+  return reader;
+}();
 void heif_check(heif_error e) { require(e.code == heif_error_Ok, e.message ? e.message : "HEIF codec error", PE_DECODE_ERROR); }
 Bytes nclx_profile(const heif_color_profile_nclx& nclx) {
   cmsCIExyY white{.3127, .3290, 1};
@@ -471,14 +494,12 @@ std::unique_ptr<pe_image> heif_decode(const Bytes& bytes, const pe_decode_option
 struct Destination {
   std::string path; FILE* file = nullptr; bool committed = false;
   explicit Destination(std::string p) : path(std::move(p)) {
-    int fd = ::open(path.c_str(), O_WRONLY | O_CREAT | O_EXCL, 0644);
-    require(fd >= 0, "Destination already exists or cannot be created: " + path, PE_IO_ERROR);
-    file = fdopen(fd, "wb");
-    if (!file) { ::close(fd); ::unlink(path.c_str()); throw Error(PE_IO_ERROR, "Cannot open output stream"); }
+    file = io::create_output(path);
+    require(file, "Destination already exists or cannot be created: " + path, PE_IO_ERROR);
   }
-  ~Destination() { if (file) std::fclose(file); if (!committed) ::unlink(path.c_str()); }
+  ~Destination() { if (file) std::fclose(file); if (!committed) io::remove(path); }
   void finish() {
-    bool ok = std::fflush(file) == 0 && ::fsync(fileno(file)) == 0;
+    bool ok = io::flush(file);
     int status = std::fclose(file); file = nullptr;
     require(ok && status == 0, "Cannot flush encoded image", PE_IO_ERROR); committed = true;
   }
@@ -672,7 +693,7 @@ std::unique_ptr<RowWriter> row_writer(FILE* file,const pe_image_info& info,pe_fo
 }
 
 pe_lens_info chunk_lens(const std::string& path,uint64_t bytes,bool png) {
-  std::ifstream file(path,std::ios::binary);uint64_t at=png?8:12;
+  std::ifstream file(io::path(path),std::ios::binary);uint64_t at=png?8:12;
   auto be=[](const unsigned char* p){return uint32_t(p[0])<<24|uint32_t(p[1])<<16|uint32_t(p[2])<<8|p[3];};
   while(at<=bytes && bytes-at>=8){
     unsigned char header[8]{};file.seekg(std::streamoff(at));file.read(reinterpret_cast<char*>(header),8);if(!file)return {};
@@ -690,10 +711,10 @@ pe_lens_info chunk_lens(const std::string& path,uint64_t bytes,bool png) {
   return {};
 }
 ImageProbe probe_image(const std::string& path,uint64_t file_limit){
-  ImageProbe probe;std::error_code error;probe.file_bytes=std::filesystem::file_size(path,error);
+  ImageProbe probe;std::error_code error;probe.file_bytes=std::filesystem::file_size(io::path(path),error);
   require(!error,"Cannot open image: "+path,PE_IO_ERROR);
   require(probe.file_bytes>0 && probe.file_bytes<=file_limit,"Input exceeds file size limit",PE_LIMIT_EXCEEDED);
-  std::array<uint8_t,64> header{};{std::ifstream file(path,std::ios::binary);file.read(reinterpret_cast<char*>(header.data()),header.size());}
+  std::array<uint8_t,64> header{};{std::ifstream file(io::path(path),std::ios::binary);file.read(reinterpret_cast<char*>(header.data()),header.size());}
   if(header[0]==0xff && header[1]==0xd8){
     auto state=std::make_unique<JpegRead>();state->codec.err=jpeg_std_error(&state->error.manager);state->error.manager.error_exit=jpeg_error;
     if(setjmp(state->error.jump))throw Error(PE_DECODE_ERROR,state->error.message);
@@ -715,9 +736,10 @@ ImageProbe probe_image(const std::string& path,uint64_t file_limit){
 #endif
 #ifdef PE_HAVE_HEIF
   else if(heif_file(path,probe.file_bytes)){
+    HeifInput input(path);
     std::unique_ptr<heif_context,decltype(&heif_context_free)> context(heif_context_alloc(),heif_context_free);
     require(bool(context),"Cannot allocate HEIF probe",PE_OUT_OF_MEMORY);
-    heif_check(heif_context_read_from_file(context.get(),path.c_str(),nullptr));
+    heif_check(heif_context_read_from_reader(context.get(),&heif_file_reader,&input,nullptr));
     heif_image_handle* handle=nullptr;heif_check(heif_context_get_primary_image_handle(context.get(),&handle));
     probe.metadata.info.width=uint32_t(heif_image_handle_get_width(handle));probe.metadata.info.height=uint32_t(heif_image_handle_get_height(handle));
     heif_item_id id;
@@ -735,7 +757,7 @@ ImageProbe probe_image(const std::string& path,uint64_t file_limit){
 #endif
   else{
     auto raw_owner=std::make_unique<LibRaw>();auto& raw=*raw_owner;
-    const int status=raw.open_file(path.c_str());require(status==LIBRAW_SUCCESS,libraw_strerror(status),PE_UNSUPPORTED);
+    const int status=raw.open_file(io::path(path).c_str());require(status==LIBRAW_SUCCESS,libraw_strerror(status),PE_UNSUPPORTED);
     std::snprintf(probe.metadata.lens.make,sizeof(probe.metadata.lens.make),"%s",raw.imgdata.lens.LensMake);
     std::snprintf(probe.metadata.lens.model,sizeof(probe.metadata.lens.model),"%s",raw.imgdata.lens.Lens[0]?raw.imgdata.lens.Lens:raw.imgdata.lens.makernotes.Lens);
     probe.metadata.info.width=raw.imgdata.sizes.width;probe.metadata.info.height=raw.imgdata.sizes.height;
@@ -759,7 +781,7 @@ std::unique_ptr<DiskImage> raw_to_disk(const std::string& path,const pe_decode_o
   };
   raw.imgdata.rawparams.max_raw_memory_mb=unsigned(std::min<uint64_t>(
       raw.imgdata.rawparams.max_raw_memory_mb,budget/1048576));
-  check(raw.open_file(path.c_str()));
+  check(raw.open_file(io::path(path).c_str()));
   require(raw_disk_supported(raw),"RAW representation is not supported by disk export",PE_UNSUPPORTED);
   const auto& sizes=raw.imgdata.sizes;
   const uint32_t sw=std::max(uint32_t(sizes.raw_width),uint32_t(sizes.width)+sizes.left_margin);
@@ -773,11 +795,8 @@ std::unique_ptr<DiskImage> raw_to_disk(const std::string& path,const pe_decode_o
   require(std::filesystem::space(temporary).available>=pixels*8+64*1024*1024,
       "RAW 导出的临时磁盘空间不足，需要至少 "+std::to_string((pixels*8+1048575)/1048576)+" MiB",PE_IO_ERROR);
   auto disk=std::make_unique<DiskImage>();
-  std::string name=(temporary/"photo-raw-pixels-XXXXXX").string();
-  std::vector<char> writable(name.begin(),name.end());writable.push_back(0);
-  const int fd=mkstemp(writable.data());require(fd>=0,"Cannot create private RAW pixel storage",PE_IO_ERROR);
-  ::unlink(writable.data());disk->file=fdopen(fd,"w+b");
-  if(!disk->file){::close(fd);throw Error(PE_IO_ERROR,"Cannot open RAW pixel storage");}
+  disk->file=io::temporary();
+  require(disk->file,"Cannot create private RAW pixel storage",PE_IO_ERROR);
   auto& params=raw.imgdata.params;
   params.output_bps=16;params.output_color=1;params.gamm[0]=1;params.gamm[1]=1;
   params.no_auto_bright=1;params.use_camera_wb=1;params.use_auto_wb=0;params.user_qual=3;
@@ -818,9 +837,8 @@ std::unique_ptr<DiskImage> jpeg_to_disk(const std::string& path,const pe_decode_
   require(std::filesystem::space(temporary).available>=disk_bytes+64*1024*1024,"JPEG 分条处理的临时磁盘空间不足，需要至少 "+std::to_string((disk_bytes+1048575)/1048576)+" MiB",PE_IO_ERROR);
   jpeg_decoder_budget(state.get(),budget,uint64_t(width)*64*32);
   disk->metadata=state->meta;
-  std::string name=(temporary/"photo-pixels-XXXXXX").string();std::vector<char> writable(name.begin(),name.end());writable.push_back(0);
-  const int fd=mkstemp(writable.data());require(fd>=0,"Cannot create private pixel storage",PE_IO_ERROR);::unlink(writable.data());
-  disk->file=fdopen(fd,"w+b");if(!disk->file){::close(fd);throw Error(PE_IO_ERROR,"Cannot open pixel storage");}
+  disk->file=io::temporary();
+  require(disk->file,"Cannot create private pixel storage",PE_IO_ERROR);
   if(setjmp(state->error.jump))throw Error(PE_DECODE_ERROR,state->error.message);
   state->codec.out_color_space=JCS_RGB;jpeg_start_decompress(&state->codec);state->row.resize(size_t(width)*3);
   for(uint32_t y=0;y<height;){
@@ -837,11 +855,11 @@ std::unique_ptr<DiskImage> jpeg_to_disk(const std::string& path,const pe_decode_
 
 std::unique_ptr<pe_image> decode(const std::string& path, const pe_decode_options& options) {
   std::error_code file_error;
-  const uint64_t file_size = std::filesystem::file_size(path, file_error);
+  const uint64_t file_size = std::filesystem::file_size(io::path(path), file_error);
   require(!file_error, "Cannot open image: " + path, PE_IO_ERROR);
   require(file_size && file_size <= options.max_file_bytes, "Input exceeds file size limit", PE_LIMIT_EXCEEDED);
   std::array<uint8_t, 16> signature{};
-  { std::ifstream file(path, std::ios::binary); file.read(reinterpret_cast<char*>(signature.data()), signature.size()); }
+  { std::ifstream file(io::path(path), std::ios::binary); file.read(reinterpret_cast<char*>(signature.data()), signature.size()); }
   if(signature[0]==0xff && signature[1]==0xd8 && signature[2]==0xff) {
     auto out = jpeg_decode(path, options);
     if (options.max_edge && std::max(out->info.width,out->info.height)>options.max_edge) return resize(*out,options.max_edge);

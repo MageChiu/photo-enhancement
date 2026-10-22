@@ -1,0 +1,13 @@
+{
+  "name": "photo-enhancement-windows",
+  "version-string": "0.1.0",
+  "dependencies": [
+    "libjpeg-turbo",
+    "libpng",
+    "tiff",
+    "lcms",
+    "freetype",
+    "libwebp",
+    { "name": "libheif", "default-features": false }
+  ]
+}

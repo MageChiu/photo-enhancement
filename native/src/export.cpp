@@ -1,7 +1,5 @@
 #include "internal.hpp"
 #include "heif_support.hpp"
-#include <fcntl.h>
-#include <unistd.h>
 #include <cstring>
 
 namespace pe {
@@ -9,13 +7,12 @@ namespace {
 struct Output {
   std::string path; FILE* file=nullptr; bool committed=false;
   explicit Output(const std::string& value):path(value){
-    const int fd=::open(path.c_str(),O_WRONLY|O_CREAT|O_EXCL,0644);
-    require(fd>=0,"Destination already exists or cannot be created: "+path,PE_IO_ERROR);
-    file=fdopen(fd,"wb");if(!file){::close(fd);::unlink(path.c_str());throw Error(PE_IO_ERROR,"Cannot open output");}
+    file=io::create_output(path);
+    require(file,"Destination already exists or cannot be created: "+path,PE_IO_ERROR);
   }
-  ~Output(){if(file)std::fclose(file);if(!committed)::unlink(path.c_str());}
+  ~Output(){if(file)std::fclose(file);if(!committed)io::remove(path);}
   void finish(){
-    const bool flushed=std::fflush(file)==0 && ::fsync(fileno(file))==0;
+    const bool flushed=io::flush(file);
     const int status=std::fclose(file);file=nullptr;
     require(flushed&&status==0,"Cannot flush output",PE_IO_ERROR);committed=true;
   }
@@ -41,7 +38,7 @@ void process_file(const std::string& path,const std::string& destination,const p
   const uint64_t automatic=memory_budget();
   const uint64_t budget=requested?std::min(requested,automatic):automatic;
   std::error_code destination_error;
-  require(!std::filesystem::exists(destination,destination_error) && !destination_error,
+  require(!std::filesystem::exists(io::path(destination),destination_error) && !destination_error,
       "Destination already exists or cannot be inspected: "+destination,PE_IO_ERROR);
   if(style)validate_frame(*style);
   if(adjustments)validate_frame_adjustments(*adjustments);

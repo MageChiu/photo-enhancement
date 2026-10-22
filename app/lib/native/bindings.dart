@@ -193,6 +193,11 @@ class Bindings {
   static DynamicLibrary _open(String? path) {
     if (path != null && path.isNotEmpty) return DynamicLibrary.open(path);
     if (Platform.isIOS) return DynamicLibrary.process();
+    if (Platform.isWindows) {
+      final directory = File(Platform.resolvedExecutable).parent.path;
+      return DynamicLibrary.open(
+          '$directory${Platform.pathSeparator}photo_core.dll');
+    }
     if (Platform.isAndroid || Platform.operatingSystem == 'ohos') {
       return DynamicLibrary.open('libphoto_core.so');
     }

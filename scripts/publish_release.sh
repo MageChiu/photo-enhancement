@@ -19,6 +19,7 @@ Source: $GITHUB_REF
 Build: $GITHUB_SERVER_URL/$GITHUB_REPOSITORY/actions/runs/$GITHUB_RUN_ID
 
 - macOS: arm64 and x86_64 application ZIPs and drag-to-Applications DMGs, ad-hoc signed, not notarized.
+- Windows: x64 MSI installer and portable ZIP, including application-local VC++ runtime; unsigned.
 - Android: arm64-v8a and x86_64 APKs, development signing.
 - iOS: unsigned arm64 device app (requires signing before installation) and arm64 simulator debug app.
 - Verify downloads with SHA256SUMS; build-info.json records provenance.

@@ -3,13 +3,13 @@
 
 namespace pe {
 std::unique_ptr<pe_lut> load_lut(const std::string& path) {
-  std::ifstream file(path);
+  std::ifstream file(io::path(path));
   require(bool(file), "Cannot open LUT: " + path, PE_IO_ERROR);
-  require(std::filesystem::file_size(path) <= 16 * 1024 * 1024, "LUT file is too large", PE_LIMIT_EXCEEDED);
+  require(std::filesystem::file_size(io::path(path)) <= 16 * 1024 * 1024, "LUT file is too large", PE_LIMIT_EXCEEDED);
   auto lut = std::make_unique<pe_lut>();
   std::string line;
   size_t line_number = 0;
-  const auto filename = std::filesystem::path(path).filename().string();
+  const auto filename = io::path(path).filename().u8string();
   bool have_size = false, have_low = false, have_high = false;
   while (std::getline(file, line)) {
     ++line_number;
