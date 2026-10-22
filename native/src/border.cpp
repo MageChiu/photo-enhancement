@@ -1,4 +1,5 @@
 #include "internal.hpp"
+#include "font_io.hpp"
 #include <ft2build.h>
 #include FT_FREETYPE_H
 #include <cstring>
@@ -32,6 +33,7 @@ std::vector<uint32_t> codepoints(const std::string& text) {
 }
 struct Font {
   FT_Library library = nullptr; FT_Face face = nullptr;
+  std::vector<unsigned char> storage;
   ~Font() { if (face) FT_Done_Face(face); if (library) FT_Done_FreeType(library); }
 };
 }
@@ -70,7 +72,7 @@ void paint_caption(pe_image* out,const pe_image_info& source,const pe_border& b,
   require(b.font_path[0], "A font path is required for an EXIF/text border");
   auto chars = codepoints(text);
   Font font;
-  require(FT_Init_FreeType(&font.library) == 0 && FT_New_Face(font.library, b.font_path, 0, &font.face) == 0,
+  require(FT_Init_FreeType(&font.library) == 0 && open_font(font.library, b.font_path, font.storage, &font.face) == 0,
       "Cannot load the caption font", PE_IO_ERROR);
   uint32_t size = std::max(1U, uint32_t(bottom * .23));
   int64_t text_width = 0;
@@ -131,7 +133,7 @@ void validate_frame(const pe_frame& f) {
 }
 std::unique_ptr<pe_image> frame_logo(const pe_frame& f) {
   validate_frame(f);if(!f.logo_path[0])return nullptr;
-  std::ifstream file(f.logo_path,std::ios::binary);unsigned char signature[8]{};
+  std::ifstream file(io::path(f.logo_path),std::ios::binary);unsigned char signature[8]{};
   file.read(reinterpret_cast<char*>(signature),8);
   const unsigned char png[]{137,80,78,71,13,10,26,10};
   require(file.gcount()==8 && std::memcmp(signature,png,8)==0,"Frame logo must be PNG",PE_UNSUPPORTED);
@@ -157,7 +159,7 @@ void frame_line(pe_image* out,const pe_border& b,const std::string& text,int lef
     int middle,uint32_t size,uint32_t origin,int top,int bottom,int alignment) {
   if(text.empty() || available<=0)return;
   require(b.font_path[0],"A font path is required for frame text");
-  Font font;require(FT_Init_FreeType(&font.library)==0 && FT_New_Face(font.library,b.font_path,0,&font.face)==0,
+  Font font;require(FT_Init_FreeType(&font.library)==0 && open_font(font.library,b.font_path,font.storage,&font.face)==0,
       "Cannot load frame font",PE_IO_ERROR);
   const auto chars=codepoints(text);int64_t length=0;
   for(;;){

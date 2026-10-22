@@ -132,9 +132,60 @@ jobs:
           if-no-files-found: error
           retention-days: 14
 
+  windows:
+    name: Windows x64 application and MSI
+    runs-on: windows-2022
+    timeout-minutes: 120
+    env:
+      VCPKG_BINARY_SOURCES: clear;files,${{ github.workspace }}/build/vcpkg-cache,readwrite
+      DOTNET_ROLL_FORWARD: Major
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          submodules: recursive
+          persist-credentials: false
+      - uses: actions/checkout@v6
+        with:
+          repository: microsoft/vcpkg
+          ref: '2026.07.29'
+          path: build/vcpkg
+          persist-credentials: false
+      - uses: actions/cache@v4
+        with:
+          path: build/vcpkg-cache
+          key: windows-x64-vcpkg-2026.07.29-${{ hashFiles('platform/windows/vcpkg.json') }}
+      - uses: subosito/flutter-action@v2
+        with:
+          flutter-version-file: app/.fvmrc
+          cache: true
+      - uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: '8.0.x'
+      - name: Install native dependency and MSI tools
+        shell: pwsh
+        run: |
+          & build/vcpkg/bootstrap-vcpkg.bat -disableMetrics
+          if ($LASTEXITCODE -ne 0) { throw 'vcpkg bootstrap failed' }
+          dotnet tool install --tool-path build/wix wix --version 4.0.6
+          if ($LASTEXITCODE -ne 0) { throw 'WiX installation failed' }
+          & build/wix/wix.exe extension add --global WixToolset.UI.wixext/4.0.6
+          if ($LASTEXITCODE -ne 0) { throw 'WiX UI extension installation failed' }
+          (Resolve-Path build/wix).Path | Out-File -FilePath $env:GITHUB_PATH -Append
+      - name: Build and package application
+        shell: pwsh
+        run: ./scripts/build_windows.ps1 -VcpkgRoot build/vcpkg
+      - uses: actions/upload-artifact@v4
+        with:
+          name: package-windows
+          path: |
+            artifacts/photo-enhancement-windows-x64.msi
+            artifacts/photo-enhancement-windows-x64.zip
+          if-no-files-found: error
+          retention-days: 14
+
   release:
     name: Validate release assets and publish
-    needs: [macos, android, ios]
+    needs: [macos, android, ios, windows]
     runs-on: ubuntu-24.04
     timeout-minutes: 15
     permissions:

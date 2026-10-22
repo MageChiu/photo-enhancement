@@ -1,0 +1,11 @@
+Photo Enhancement / 光屿
+
+This installer contains the application, its Flutter runtime, image codecs,
+and application-local Microsoft Visual C++ runtime DLLs.
+
+Third-party license notices and the corresponding source references are included
+in the third-party-licenses directory. Each third-party component retains its
+own license. This notice does not grant an additional license to the application.
+
+Uninstalling removes the installed application. Personal presets and other
+application data in the user's profile are retained.

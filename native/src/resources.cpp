@@ -1,5 +1,9 @@
 #include "internal.hpp"
+#ifdef _WIN32
+#include <windows.h>
+#else
 #include <unistd.h>
+#endif
 #ifdef __APPLE__
 #include <TargetConditionals.h>
 #include <sys/sysctl.h>
@@ -13,7 +17,10 @@ namespace pe {
 uint64_t memory_budget(bool preview) noexcept {
   constexpr uint64_t MiB = 1024ULL * 1024;
   uint64_t physical = 0, available = 0;
-#if defined(__APPLE__)
+#if defined(_WIN32)
+  MEMORYSTATUSEX status{};status.dwLength=sizeof(status);
+  if(GlobalMemoryStatusEx(&status)){physical=status.ullTotalPhys;available=status.ullAvailPhys;}
+#elif defined(__APPLE__)
   size_t length = sizeof(physical);
   if (sysctlbyname("hw.memsize", &physical, &length, nullptr, 0) != 0) physical = 0;
   vm_statistics64_data_t stats{};
@@ -73,7 +80,7 @@ std::unique_ptr<pe_image> DiskImage::strip(uint32_t y, uint32_t rows) const {
   for (uint32_t sy=sy0;sy<sy1;++sy) {
     const uint64_t offset = (uint64_t(sy)*info.width+sx0)*8;
     const size_t bytes = row.size()*2;
-    require(pread(fileno(file),row.data(),bytes,off_t(offset))==ssize_t(bytes), "Cannot read temporary pixel storage", PE_IO_ERROR);
+    require(io::read_at(file,row.data(),bytes,offset), "Cannot read temporary pixel storage", PE_IO_ERROR);
     for (uint32_t sx=sx0;sx<sx1;++sx) {
       uint32_t dx=sx,dy=sy;
       switch(metadata.orientation) {

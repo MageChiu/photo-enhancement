@@ -9,6 +9,6 @@ python3 scripts/validate_luts.py
 cd app
 # Gradle invokes root CMake for each ABI and packages libphoto_core.so.
 flutter pub get
-flutter build apk --release --target-platform android-arm64,android-x64 "$@"
+flutter build apk --release --no-pub --target-platform android-arm64,android-x64 "$@"
 printf '%s\n' 'APK directory: app/build/app/outputs/flutter-apk (relative to project root).'
 printf '%s\n' 'Uses the existing development signing configuration. Configure your release keystore before store distribution.'

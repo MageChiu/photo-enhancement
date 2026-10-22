@@ -8,7 +8,7 @@
 
 ## GitHub 自动构建与发布
 
-推送 `dev/dev-v*` 分支运行与 release 相同的 macOS、Android、iOS 应用构建、打包和发布包校验，但不发布且不额外运行测试；推送 `release-*` 分支生成预发布，推送任意 tag 生成正式 Release。产物包含 macOS 双架构 ZIP / DMG、Android 双 ABI APK、iOS 未签名设备包及模拟器包，以及 SHA256 校验和。鸿蒙暂不参与流水线；上述三端全部成功后才发布。Windows 尚未接入。配置方法、签名边界及使用示例见 [GitHub 流水线](docs/GitHub流水线.md)。
+推送 `dev/dev-v*` 分支运行与 release 相同的 macOS、Windows、Android、iOS 应用构建、打包和发布包校验，但不发布且不额外运行测试；推送 `release-*` 分支生成预发布，推送任意 tag 生成正式 Release。产物包含 macOS 双架构 ZIP / DMG、Windows x64 MSI / ZIP、Android 双 ABI APK、iOS 未签名设备包及模拟器包，以及 SHA256 校验和。鸿蒙暂不参与流水线；上述四端全部成功后才发布。Windows 构建入口已接入，首次 Windows CI 和安装验收尚待实跑，详见 [Windows 构建](docs/Windows构建.md)。配置方法、签名边界及使用示例见 [GitHub 流水线](docs/GitHub流水线.md)。
 
 ## 获取源码与子模块
 
@@ -33,6 +33,7 @@ git submodule update --init --recursive
 | C ABI | 版本、错误码、资源上限、不可变图像句柄、显式释放、RGBA 预览 | API 在 native/include/pe/pe.h |
 | Flutter | 编辑页、基础/高级调色、纪实光影滤镜、原片对比、可选 EXIF 与品牌文字/PNG 相框、独立边框预设、撤销重做、原图导出 | 早期版本静态检查及 9 项自动化检查通过；本轮新增功能尚待用户编译与测试 |
 | macOS 平台接入 | Runner、Release 依赖闭包重定位、独立应用和 ZIP 打包 | Release 构建、打包和 ad-hoc 签名校验已通过；不含 Developer ID 公证 |
+| Windows x64 | Flutter Runner、原生 DLL、中文路径及文件平台层、MSI / ZIP 打包和 CI 入口 | 本机原生回归与脚本检查已执行；Windows 编译、安装及启动尚待实际验证 |
 | iOS | 设备/模拟器静态库构建、强制链接 C ABI、系统文档导入导出 | 原生三架构编译通过；整包构建被本机 Xcode 缺少 iOS 26.5 平台组件阻塞 |
 | Android | Gradle 按 ABI 源码构建内核，系统文档导入导出 | arm64-v8a/x86_64 配置已接入；本机缺 Android SDK/NDK，尚未整包编译 |
 | HarmonyOS | ohos SDK 显式构建入口、ArkTS 文档桥接、Dart FFI 动态库加载 | 宿主模板和生成/接入脚本已编写；缺 ohos Flutter/DevEco SDK，尚未编译 |
