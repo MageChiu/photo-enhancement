@@ -15,6 +15,8 @@ concurrency:
 
 jobs:
   macos:
+    permissions:
+      contents: write
     name: macOS (${{ matrix.arch }}) application
     strategy:
       fail-fast: false
@@ -49,14 +51,13 @@ jobs:
           ln -s /Applications build/macos-dmg/Applications
           hdiutil create -volname 光屿 -srcfolder build/macos-dmg -ov -format UDZO "artifacts/photo-enhancement-macos-${ARCH}.dmg"
           hdiutil verify "artifacts/photo-enhancement-macos-${ARCH}.dmg"
-      - uses: actions/upload-artifact@v4
+      - uses: ./.github/actions/publish-platform
         with:
-          name: package-macos-${{ matrix.arch }}
-          path: artifacts/*
-          if-no-files-found: error
-          retention-days: 14
+          platform: macos-${{ matrix.arch }}
 
   android:
+    permissions:
+      contents: write
     name: Android (arm64-v8a, x86_64)
     runs-on: ubuntu-24.04
     timeout-minutes: 90
@@ -86,14 +87,13 @@ jobs:
           for abi in arm64-v8a x86_64; do
             cp "app/build/app/outputs/flutter-apk/app-${abi}-release.apk" "artifacts/photo-enhancement-android-${abi}.apk"
           done
-      - uses: actions/upload-artifact@v4
+      - uses: ./.github/actions/publish-platform
         with:
-          name: package-android
-          path: artifacts/*
-          if-no-files-found: error
-          retention-days: 14
+          platform: android
 
   ios:
+    permissions:
+      contents: write
     name: iOS (unsigned device and simulator)
     runs-on: macos-15
     timeout-minutes: 120
@@ -125,14 +125,13 @@ jobs:
         run: |
           flutter build ios --simulator --debug
           ditto -c -k --sequesterRsrc --keepParent build/ios/iphonesimulator/Runner.app ../artifacts/photo-enhancement-ios-simulator-arm64.zip
-      - uses: actions/upload-artifact@v4
+      - uses: ./.github/actions/publish-platform
         with:
-          name: package-ios
-          path: artifacts/*
-          if-no-files-found: error
-          retention-days: 14
+          platform: ios
 
   windows:
+    permissions:
+      contents: write
     name: Windows x64 application and MSI
     runs-on: windows-2022
     timeout-minutes: 120
@@ -174,42 +173,21 @@ jobs:
       - name: Build and package application
         shell: pwsh
         run: ./scripts/build_windows.ps1 -VcpkgRoot build/vcpkg
-      - uses: actions/upload-artifact@v4
+      - name: Preserve Windows packaging diagnostics
+        if: failure()
+        uses: actions/upload-artifact@v4
         with:
-          name: package-windows
+          name: windows-packaging-diagnostics
           path: |
-            artifacts/photo-enhancement-windows-x64.msi
-            artifacts/photo-enhancement-windows-x64.zip
-          if-no-files-found: error
+            artifacts/_CPack_Packages/**/wix.log
+            artifacts/_CPack_Packages/**/*.wxs
+            artifacts/_CPack_Packages/**/*.wxi
+            build/windows-installer/CPackConfig.cmake
+            build/windows-installer/cmake_install.cmake
+          if-no-files-found: ignore
           retention-days: 14
-
-  release:
-    name: Validate release assets and publish
-    needs: [macos, android, ios, windows]
-    runs-on: ubuntu-24.04
-    timeout-minutes: 15
-    permissions:
-      contents: write
-    steps:
-      - uses: actions/checkout@v6
+          overwrite: true
+      - uses: ./.github/actions/publish-platform
         with:
-          persist-credentials: false
-      - uses: actions/download-artifact@v4
-        with:
-          pattern: package-*
-          merge-multiple: true
-          path: artifacts
-      - name: Validate complete asset set and generate checksums (also on dev)
-        run: python3 scripts/prepare_release.py
-      - uses: actions/upload-artifact@v4
-        with:
-          name: release-bundle
-          path: artifacts/*
-          if-no-files-found: error
-          retention-days: 14
-      - name: Publish GitHub Release
-        if: github.event_name == 'push' && (github.ref_type == 'tag' || startsWith(github.ref_name, 'release-'))
-        env:
-          GH_TOKEN: ${{ github.token }}
-          GH_REPO: ${{ github.repository }}
-        run: bash scripts/publish_release.sh
+          platform: windows-x64
+          python: python

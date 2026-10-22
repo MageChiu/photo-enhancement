@@ -31,6 +31,8 @@ wix extension add --global WixToolset.UI.wixext/4.0.6
 
 产物放在 `artifacts/`。原生依赖放在 `build/windows-vcpkg/x64-windows`，内核放在 `build/windows-native/Release`，Flutter 应用在 `app/build/windows/x64/runner/Release`。构建脚本遇到任何原生命令失败会立即退出，不继续打包旧文件。
 
+Flutter 3.47.7 的 `build windows` 按宿主架构选择目标，不接受 `--target-platform`。脚本要求 x64 Windows 宿主，执行 `flutter build windows --release --no-pub`；依赖已由前一步 `flutter pub get` 获取。
+
 版本来自 `app/pubspec.yaml` 的 `major.minor.patch`，构建号 `+N` 不参与 MSI 版本比较。发布升级时须提升这三个字段之一。MSI 前两段最多 255，第三段最多 65535；固定 Upgrade GUID 用于识别同一应用，CPack 的 MajorUpgrade 处理安装替换。安装到 Program Files 需要管理员授权。
 
 原生依赖使用固定 `2026.07.29` vcpkg 仓库版本和 `platform/windows/vcpkg.json`，与移动端的 PortableDependencies 分开管理。HEIF 不启用默认 HEVC 编码器，提供 HEIC 解码和 JPEG/PNG 导出；导出能力仍按运行时检测结果展示。依赖版权文件、LibRaw 许可证、依赖来源说明及 vcpkg 提交记录随包携带。
@@ -46,9 +48,13 @@ wix extension add --global WixToolset.UI.wixext/4.0.6
 
 ## 流水线与验收
 
-GitHub Actions 的 `windows-2022` job 安装固定依赖与 WiX，执行同一个构建脚本，上传 MSI 和完整 ZIP。`dev/dev-v*` 与 `release-*` 共用构建和打包步骤，不增加分析或单元测试任务；打包前从应用目录加载 DLL（不借用 vcpkg 的 PATH），检查 x64 二进制、C ABI 和编解码能力，避免开发环境掩盖缺失依赖。Windows 与 macOS、Android、iOS 全部构建成功后才汇总，只有 release/tag 执行发布。
+GitHub Actions 的 `windows-2022` job 安装固定依赖与 WiX，执行同一个构建脚本，上传 MSI 和完整 ZIP。`dev/dev-v*` 与 `release-*` 共用构建和打包步骤，不增加分析或单元测试任务；打包前从应用目录加载 DLL（不借用 vcpkg 的 PATH），检查 x64 二进制、C ABI 和编解码能力，避免开发环境掩盖缺失依赖。Windows 成功后独立上传 MSI、ZIP 和本平台元数据，其他平台的失败不会阻塞 Windows 发布；只有 release/tag 执行发布。
 
 首次验收应在没有开发工具链的 Windows x64 机器上安装 MSI，检查启动、中文路径导入导出、JPEG/PNG/TIFF/RAW/HEIC、内置字体相框、个人预设持久化，以及升级/卸载。MSI 生成成功本身不代表这些运行行为已经通过。
+
+若 MSI 打包失败，脚本会在 Actions 日志的 `WiX diagnostics` 折叠组打印 `wix.log` 中的具体错误；流水线同时保存 `windows-packaging-diagnostics` artifact，包含 WiX 日志、生成的 WiX 源文件和 CPack 安装配置，保留 14 天。排查时应查看这些具体错误，不能仅凭 CPack 的 `Fatal WiX Generator Error` 判断原因。
+
+MSI 使用简体中文界面（`zh-CN`、语言 ID `2052`）和数据库代码页 `936`，以保存“光屿”等中文菜单和快捷方式名称。配置阶段基于 CMake 自带的 WiX 4 模板生成语言/代码页覆盖；若上游模板结构改变，会明确报错，避免退回默认 `1252` 后出现 `WIX0311`。
 
 开发者可另行构建 `photo_platform_io_tests` 验证平台文件层；现有依赖 POSIX 测试助手的旧原生测试仍只在 Unix 主机运行，不影响默认的应用构建流水线。
 
